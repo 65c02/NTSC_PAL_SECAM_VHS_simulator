@@ -2,15 +2,20 @@
 rem ===========================================================================
 rem  Simulateur de codage couleur NTSC / PAL / SECAM
 rem
-rem  Usage :   run.bat [commande]
+rem  Usage :   run.bat [commande] [argument]
 rem
-rem    (rien)     lance l'interface graphique
+rem    (rien)     lance le banc de mesure (interface d'analyse d'images)
+rem    video      lance le lecteur video temps reel sur GPU
 rem    tests      execute la suite de verification
-rem    figures    regenere les vingt figures du cours
+rem    figures    regenere les figures du cours
 rem    html       reconstruit la page HTML du cours
 rem    tout       figures + html + tests
 rem    install    installe les dependances
 rem    aide       affiche ce message
+rem
+rem  IMPORTANT : ce fichier doit rester en fins de ligne CRLF. En LF seul,
+rem  cmd.exe se decale d'un octet apres chaque saut et mange le debut des
+rem  lignes suivant un goto -- le script part en vrille sans message clair.
 rem ===========================================================================
 
 rem La console Windows n'affiche pas les accents en page de codes 850 ; on
@@ -36,9 +41,12 @@ if not defined PY goto :pas_de_python
 
 rem ------------------------------------------------------------- commande ---
 set "CMD=%~1"
-if "%CMD%"=="" set "CMD=gui"
+if "%CMD%"=="" set "CMD=mesure"
 
-if /i "%CMD%"=="gui"      goto :gui
+if /i "%CMD%"=="mesure"   goto :mesure
+if /i "%CMD%"=="gui"      goto :mesure
+if /i "%CMD%"=="video"    goto :video
+if /i "%CMD%"=="lecteur"  goto :video
 if /i "%CMD%"=="tests"    goto :tests
 if /i "%CMD%"=="test"     goto :tests
 if /i "%CMD%"=="figures"  goto :figures
@@ -60,13 +68,34 @@ set "ERREUR=2"
 goto :aide
 
 rem =========================================================================
-:gui
+:mesure
 call :verifier_dependances
 if errorlevel 1 goto :fin
 echo.
-echo   Lancement de l'interface... (fermez cette fenetre pour quitter)
+echo   Banc de mesure — chargez une image, comparez les trois normes.
+echo   (fermez cette fenetre pour quitter)
 echo.
 %PY% -m gui
+goto :fin
+
+rem =========================================================================
+:video
+call :verifier_dependances
+if errorlevel 1 goto :fin
+%PY% -c "import OpenGL" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   PyOpenGL est absent, et le lecteur video en a besoin.
+    echo   Lancez :  run.bat install
+    echo.
+    set "ERREUR=1"
+    goto :fin
+)
+echo.
+echo   Lecteur video — Ctrl+O pour ouvrir un fichier, 1/2/3 pour changer
+echo   de norme, Espace pour lire ou mettre en pause, F11 pour le plein ecran.
+echo.
+%PY% -m lecteur %2 %3 %4
 goto :fin
 
 rem =========================================================================
@@ -129,9 +158,13 @@ rem =========================================================================
 echo.
 echo   Simulateur de codage couleur NTSC / PAL / SECAM
 echo.
-echo     run.bat            lance l'interface graphique
-echo     run.bat tests      execute la suite de verification (58 tests)
-echo     run.bat figures    regenere les vingt figures du cours
+echo     run.bat            banc de mesure : une image, trois normes, les
+echo                        instruments (oscilloscope, vectorscope, spectre)
+echo     run.bat video      lecteur video temps reel, code sur GPU
+echo     run.bat video x.mp4  ouvre directement ce fichier
+echo.
+echo     run.bat tests      execute la suite de verification (76 tests)
+echo     run.bat figures    regenere les figures du cours
 echo     run.bat html       reconstruit docs\cours.html
 echo     run.bat tout       figures + html + tests
 echo     run.bat install    installe les dependances

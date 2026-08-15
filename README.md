@@ -10,8 +10,8 @@ ne sont **jamais dessinés**. Ils émergent du calcul. C'est la seule façon
 d'être sûr que ce qu'on regarde est vrai.
 
 📘 **Le cours complet est dans [`docs/cours.md`](docs/cours.md)** — la théorie,
-les mathématiques et les dérivations, illustrés par des figures produites par
-le simulateur lui-même.
+les mathématiques et les dérivations, illustrées par vingt figures produites
+par le simulateur lui-même.
 
 ---
 
@@ -19,14 +19,26 @@ le simulateur lui-même.
 
 ```bash
 pip install -r requirements.txt
-python -m gui
 ```
 
-L'interface s'ouvre sur une mire de barres de couleur en PAL. Chargez une image
-(`Ctrl+O`), changez de norme, poussez le curseur **phase différentielle** et
-regardez le vectorscope : le NTSC tourne, le PAL pâlit, le SECAM ne bouge pas.
+Deux applications, deux usages :
 
-## Ce que fait l'interface
+```bash
+run.bat            # banc de mesure : une image fixe, les instruments
+play_video.bat     # lecteur vidéo temps réel, codage sur GPU
+```
+
+`play_video.bat` accepte aussi qu'on **glisse un fichier vidéo sur son icône**.
+Sans passer par les lanceurs : `python -m gui` et `python -m lecteur`.
+
+---
+
+## Le banc de mesure
+
+Une image fixe, analysée sous toutes les coutures. Il s'ouvre sur une mire de
+barres de couleur en PAL ; chargez une image avec `Ctrl+O`, poussez le curseur
+**phase différentielle** et regardez le vectorscope : le NTSC tourne, le PAL
+pâlit, le SECAM ne bouge pas.
 
 - **Trois vues liées** — original, décodé, différence amplifiée, à zoom et
   déplacement communs.
@@ -34,20 +46,101 @@ regardez le vectorscope : le NTSC tourne, le PAL pâlit, le SECAM ne bouge pas.
   sélectionnée. Le bouton « voir quelques cycles » descend jusqu'à la
   sinusoïde de la sous-porteuse.
 - **Un vectorscope** avec les cibles des barres 75 %, un analyseur de spectre
-  (qui montre l'entrelacement des peignes), un moniteur de forme d'onde, un
+  qui montre l'entrelacement des peignes, un moniteur de forme d'onde, un
   profil de ligne décodé, et un bilan chiffré (ΔE\*ab, erreur de teinte,
   écrêtage, résolutions).
-- **Tous les réglages normatifs** — bandes passantes, type de séparateur Y/C,
-  ligne à retard PAL, bruit, phase et gain différentiels, écho, désaccord de
+- **Tous les réglages normatifs** — bandes passantes, séparateur Y/C, ligne à
+  retard PAL, bruit, phase et gain différentiels, écho, désaccord de
   sous-porteuse, primaires, gamma, piédestal, entrelacement.
-- **Neuf mires de test** conçues pour révéler chaque artefact, dont un piège
-  à cross-color et un piège à dot crawl.
-- **Comparaison des trois normes** dans des conditions identiques, avec les
-  métriques côte à côte.
+- **Neuf mires** conçues pour révéler chacune un artefact, dont un piège à
+  cross-color et un piège à dot crawl.
+- **Comparaison des trois normes** dans des conditions identiques.
 
-## Ce que fait la bibliothèque
+Sept normes sont disponibles : NTSC-M, NTSC-J, NTSC 1953, PAL-B/G, PAL-I,
+SECAM-L et SECAM-D/K.
 
-`tvcolor` est du numpy pur, sans aucune dépendance à Qt. Elle s'utilise seule :
+---
+
+## Le lecteur vidéo
+
+```bash
+play_video.bat "C:\films\mon_film.mp4"   # ou glisser le fichier sur l'icône
+run.bat video mon_film.mp4               # équivalent, via le lanceur général
+```
+
+**Commandes** — `Ctrl+O` ouvrir · `Espace` lire/pause · `1` `2` `3` changer de
+norme **sans interrompre la lecture** · `←` `→` reculer ou avancer de cinq
+secondes · `F11` plein écran. Le glisser-déposer fonctionne aussi dans la
+fenêtre.
+
+Trois shaders GLSL — un par norme — refont le même trajet que la bibliothèque,
+mais sur le processeur graphique. Mesuré sur une RTX 3090, source 1920×1080 :
+
+| Norme | Grille de travail | Temps GPU | Cadence |
+|---|---|---|---|
+| NTSC-M | 753 × 480 à 14,32 MHz | 0,90 ms | ≈ 1100 im/s |
+| PAL-B/G | 921 × 576 à 17,73 MHz | 0,89 ms | ≈ 1120 im/s |
+| SECAM-L | 916 × 576 à 17,63 MHz | 1,15 ms | ≈ 870 im/s |
+
+Mesure faite par requête `GL_TIME_ELAPSED`, seule méthode honnête : chronométrer
+des appels OpenGL avec l'horloge du processeur donne des cadences fantaisistes,
+puisque les commandes sont empilées et rendent la main aussitôt.
+
+Trois niveaux de qualité règlent la longueur des noyaux de filtrage, entre 13
+et 31 coefficients — et jusqu'à 61 pour le piège de sous-porteuse.
+
+### L'enchaînement des passes
+
+```
+vidéo ──[codage]──> composite ──[décodage]──> image ──[présentation]──> écran
+```
+
+Le SECAM en demande dix de plus, imposées par la modulation de fréquence : la
+phase y est l'**intégrale** du signal modulant depuis le début de la ligne, et
+un fragment shader ne connaît que son propre pixel. Aucune formule locale n'a
+pour dérivée le signal modulant. Une somme préfixe par doublement récursif
+(Hillis-Steele) fournit donc cette intégrale en dix passes minuscules, chacune
+ne lisant que deux texels — coût négligeable devant une seule passe de filtrage.
+
+### Ce que le GPU concède
+
+* les filtres analogiques (Butterworth d'ordre 4) deviennent des filtres à
+  réponse finie — un shader ne peut pas être récursif ;
+* le composite est échantillonné sur la grille de la norme plutôt qu'à quatre
+  fois la sous-porteuse ;
+* les préaccentuations SECAM basse fréquence sont omises, transparentes à
+  l'aller-retour.
+
+L'écart avec le simulateur de référence est **mesuré**, pas supposé
+(`tests/test_shaders.py`) : ΔE\*ab médian de **0,70** en NTSC et **0,88** en PAL
+— sous le seuil de perception — et **3,44** en SECAM, où le piège de
+sous-porteuse à réponse finie n'égale pas le récursif de la référence.
+
+### Deux réglages qui ne se devinent pas
+
+Le **piège de sous-porteuse** a sa propre longueur de noyau, bien plus grande
+que les passe-bas : un passe-bas n'a qu'un flanc à former, un réjecteur en a
+deux encadrant une bande étroite. Mesuré sur la bande SECAM, 21 coefficients ne
+rejettent que 11 dB — la sous-porteuse resterait visible en clair. Il en faut
+41 pour atteindre 34 dB, et le gabarit est conçu par équiondulation
+(Parks-McClellan) plutôt que par fenêtrage, qui plafonnerait à 16 dB.
+
+La longueur du noyau de **démodulation SECAM** n'est pas choisie mais
+**calculée** (`longueur_minimale_discriminateur`). Le mélangeur transpose la
+luminance continue à la fréquence de repos ; le passe-bas doit l'y rejeter. Or
+la luminance vaut jusqu'à 1,0 quand la porteuse n'atteint que 0,24 : à 33 dB de
+réjection — ce qu'obtiennent treize coefficients — il reste un résidu valant 9 %
+de la porteuse, qui fausse la **phase**, c'est-à-dire précisément la grandeur
+mesurée. Le SECAM décroche alors complètement.
+
+Le son n'est pas géré : OpenCV ne décode que l'image.
+
+---
+
+## La bibliothèque
+
+`tvcolor` est du numpy pur, sans aucune dépendance à Qt ni à OpenGL. Elle
+s'utilise seule :
 
 ```python
 from tvcolor import encoder_decoder, Parametres, mires, mesures
@@ -76,6 +169,8 @@ sRGB → linéaire → [primaires] → gamma caméra → R'G'B'
      → démodulation → matriçage inverse → écrêtage → sRGB
 ```
 
+---
+
 ## Organisation
 
 ```
@@ -89,29 +184,49 @@ tvcolor/          bibliothèque de simulation (numpy pur)
   canal.py          les dégradations de la transmission
   decodeur.py       séparation Y/C, démodulation, mémoire de ligne
   pipeline.py       la chaîne complète
-  mires.py          les mires de test
+  mires.py          les neuf mires de test
   mesures.py        vectorscope, spectres, ΔE*ab, résolutions
 
-gui/              l'interface PyQt5
-docs/             le cours, et son générateur de figures
-tests/            58 tests
+shaders/          les trois shaders GLSL, un par norme
+  commun.glsl       matriçage, horloge de sous-porteuse, noyaux
+  ntsc.glsl         modulation en quadrature
+  pal.glsl          idem, avec l'inversion de V ligne à ligne
+  secam.glsl        modulation de fréquence, séquentielle
+  scan.frag         somme préfixe : l'intégrale de phase du SECAM
+  presentation.frag mise à l'échelle, lignes de balayage, masque de tube
+  sommet.vert       triangle plein écran, sans tampon de sommets
+
+lecteur/          le lecteur vidéo temps réel
+  normes_gl.py      traduction des normes en uniformes, conception des noyaux
+  gl_util.py        compilation, cibles de rendu, quad plein écran
+  vue_gl.py         l'enchaînement des passes
+  source_video.py   décodage vidéo dans un fil séparé
+  app.py            la fenêtre
+
+gui/              le banc de mesure PyQt5
+docs/             le cours, ses vingt figures, et leurs générateurs
+tests/            76 tests
 ```
+
+---
 
 ## Vérification
 
 ```bash
-python -m pytest tests/ -v
+run.bat tests          # ou : python -m pytest tests/ -v
 ```
 
-Les tests ne se contentent pas de vérifier que le code s'exécute. Ils
-contrôlent les **propriétés physiques** dont tout le reste découle :
+76 tests : 23 sur le matriçage et la colorimétrie, 16 sur l'horloge de
+sous-porteuse, 19 sur la chaîne complète, 18 sur les shaders. Ils ne se
+contentent pas de vérifier que le code s'exécute — ils contrôlent les
+**propriétés physiques** dont tout le reste découle :
 
 - les coefficients 0,299 / 0,587 / 0,114 sont recalculés depuis les primaires
   NTSC 1953 et comparés à la norme ;
-- les facteurs 0,492 et 0,877 sont redémontrés depuis la contrainte
-  d'excursion $[-1/3, +4/3]$ — et retombent à la sixième décimale ;
-- la sous-porteuse NTSC tourne de 180,000° par ligne, à $10^{-9}$ près, y
-  compris à la 480ᵉ ligne de la 100ᵉ image ;
+- les facteurs 0,492 et 0,877 sont redémontrés depuis la seule contrainte
+  d'excursion [−1/3, +4/3] — et retombent à la sixième décimale ;
+- la sous-porteuse NTSC tourne de 180,000° par ligne, à 10⁻⁹ près, y compris à
+  la 480ᵉ ligne de la 100ᵉ image ;
 - une image grise ne produit **aucune** chrominance en NTSC et en PAL, et le
   test correspondant vérifie qu'en SECAM elle en produit quand même — parce
   que c'est le cas ;
@@ -119,19 +234,40 @@ contrôlent les **propriétés physiques** dont tout le reste découle :
   de chrominance sur les demi-entiers ;
 - la ligne à retard PAL annule l'erreur de phase, le SECAM ignore le gain
   différentiel, le dot crawl apparaît, le cross-color colore une mire en noir
-  et blanc.
+  et blanc ;
+- les shaders retrouvent ce que calcule la bibliothèque, à ΔE près et borné.
 
 Si un artefact n'apparaissait pas, ce serait la simulation qui aurait tort.
 
-## Régénérer les figures du cours
+---
+
+## Le lanceur
+
+```
+run.bat                banc de mesure
+run.bat video [f.mp4]  lecteur vidéo
+run.bat tests          suite de vérification
+run.bat figures        régénère les vingt figures du cours
+run.bat html           reconstruit docs/cours.html
+run.bat tout           figures + html + tests
+run.bat install        installe les dépendances
+run.bat aide           rappelle tout ceci
+```
+
+Les figures et la page HTML se régénèrent aussi à la main :
 
 ```bash
-python docs/generer_figures.py            # les vingt
+python docs/generer_figures.py              # les vingt
 python docs/generer_figures.py --seulement 05,07,10
+python docs/construire_html.py
 ```
+
+---
 
 ## Environnement
 
-Python 3.10 ou plus récent. Testé sous Windows 11 avec Python 3.13, PyQt5
-5.15.11, numpy 1.26 et scipy 1.15.
-"# NTSC_PAL_SECAM" 
+Python 3.10 ou plus récent. Le lecteur vidéo demande en outre un pilote
+OpenGL 3.3.
+
+Testé sous Windows 11 avec Python 3.13, PyQt5 5.15.11, numpy 1.26, scipy 1.15,
+OpenCV 4.11, PyOpenGL 3.1, sur GeForce RTX 3090.
