@@ -1,0 +1,14 @@
+# Calcul — la bibliothèque tvcolor n'a besoin que de ces trois-là
+numpy>=1.24
+scipy>=1.10
+Pillow>=10.0
+
+# Interface graphique
+PyQt5>=5.15
+pyqtgraph>=0.13
+
+# Génération des figures du cours
+matplotlib>=3.7
+
+# Tests
+pytest>=7.4

@@ -1,0 +1,42 @@
+# --- Caches Python -----------------------------------------------------------
+# Le motif se termine par une barre oblique : il ne vise que les DOSSIERS
+# nommes __pycache__, ou qu'ils se trouvent dans l'arborescence, et tout leur
+# contenu est exclu avec eux.
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Caches d'outils ---------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Environnements virtuels -------------------------------------------------
+.venv/
+venv/
+env/
+
+# --- Empaquetage -------------------------------------------------------------
+build/
+dist/
+*.egg-info/
+
+# --- Editeurs et systeme -----------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# --- Notes ---------------------------------------------------------------
+# Volontairement NON ignores, bien qu'ils soient produits par le projet :
+#
+#   docs/figures/*.png   les vingt figures du cours
+#   docs/cours.html      la page HTML autonome (4,3 Mo)
+#
+# Les regenerer demande de disposer de matplotlib et de faire tourner la
+# simulation ; les garder dans le depot permet de lire le cours directement
+# depuis GitHub. Ajoutez-les ici si vous preferez un depot plus leger, et
+# reconstruisez-les avec  run.bat tout
