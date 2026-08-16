@@ -29,13 +29,22 @@ SYMBOLES = {
     "cdot": "·", "times": "×", "div": "÷", "pm": "±", "mp": "∓",
     "approx": "≈", "equiv": "≡", "neq": "≠", "leq": "≤", "geq": "≥",
     "to": "→", "rightarrow": "→", "longrightarrow": "⟶", "Rightarrow": "⟹",
+    "leftarrow": "←", "longleftarrow": "⟵",
     "in": "∈", "infty": "∞", "propto": "∝", "ldots": "…", "dots": "…",
     "partial": "∂", "circ": "∘", "ast": "∗", "sim": "∼",
+    # Délimiteurs « écrits en toutes lettres » de LaTeX. `\lvert` et `\rvert`
+    # ne diffèrent de la barre verticale que par l'espacement typographique,
+    # que l'on ne cherche pas à reproduire ; les crochets de partie entière,
+    # eux, ont bien leurs propres caractères.
+    "lvert": "|", "rvert": "|", "lVert": "‖", "rVert": "‖",
+    "lceil": "⌈", "rceil": "⌉", "lfloor": "⌊", "rfloor": "⌋",
+    "langle": "⟨", "rangle": "⟩",
 }
 
 OPERATEURS = {
     "sin": "sin", "cos": "cos", "tan": "tan", "log": "log", "ln": "ln",
     "exp": "exp", "max": "max", "min": "min", "sum": "Σ", "int": "∫",
+    "arg": "arg", "det": "det", "lim": "lim",
     "sqrt": None,   # traité à part
 }
 
@@ -297,7 +306,15 @@ def _macro(source: str, i: int, sortie: list[str]) -> int:
                 sortie.append(f'<span class="delim">{delimiteur}</span>')
             return suite + 1
         if suite < len(source) and source[suite] == "\\":
-            fin, apres = _groupe(source, suite)
+            # Délimiteur nommé : `\Big\langle`, `\left\lvert`. Il faut
+            # l'ÉMETTRE et non seulement l'avaler — sans quoi les crochets
+            # disparaissent et la formule perd son sens. Le bogue était
+            # silencieux : la moyenne ⟨·⟩ du chapitre 12 s'affichait sans ses
+            # chevrons, et rien ne le signalait.
+            macro, apres = _groupe(source, suite)
+            symbole = SYMBOLES.get(macro.lstrip("\\"))
+            if symbole:
+                sortie.append(f'<span class="delim">{symbole}</span>')
             return apres
         return suite
 

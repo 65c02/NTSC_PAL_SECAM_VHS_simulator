@@ -10,8 +10,11 @@ ne sont **jamais dessinés**. Ils émergent du calcul. C'est la seule façon
 d'être sûr que ce qu'on regarde est vrai.
 
 📘 **Le cours complet est dans [`docs/cours.md`](docs/cours.md)** — la théorie,
-les mathématiques et les dérivations, illustrées par vingt figures produites
-par le simulateur lui-même.
+les mathématiques et les dérivations, illustrées par vingt-et-une figures
+produites par le simulateur lui-même. Le **chapitre 12** est consacré aux
+shaders : comment la même chaîne a été portée sur carte graphique, ce qu'un
+fragment shader interdit, et ce que le portage a coûté en fidélité — mesuré,
+pas affirmé.
 
 ---
 
@@ -70,17 +73,55 @@ run.bat video mon_film.mp4               # équivalent, via le lanceur général
 
 **Commandes** — `Ctrl+O` ouvrir · `Espace` lire/pause · `1` `2` `3` changer de
 norme **sans interrompre la lecture** · `←` `→` reculer ou avancer de cinq
-secondes · `F11` plein écran. Le glisser-déposer fonctionne aussi dans la
-fenêtre.
+secondes · `M` couper le son · `F11` plein écran, `Échap` pour en sortir. Le
+glisser-déposer fonctionne aussi dans la fenêtre.
+
+Le plein écran masque toute l'interface — barre d'outils, panneau de réglages,
+transport et barre d'état : il ne reste que la dalle sur fond noir.
+
+### Le son mène la marche
+
+PyAV démultiplexe et décode l'image et le son **d'une seule passe** sur le
+fichier, ce qui donne des estampilles cohérentes entre les deux flux —
+condition nécessaire à toute synchronisation honnête. La sortie audio passe par
+sounddevice.
+
+C'est le **son qui sert d'horloge**, jamais l'image. Un décrochage audio
+s'entend immédiatement — craquement, silence, changement de hauteur — alors
+qu'une image affichée deux millisecondes trop tôt ne se voit pas. L'horloge
+avance donc au rythme des échantillons réellement remis au périphérique,
+latence de sortie retranchée. Mesuré : **+4 ms de dérive sur 1,8 s**.
+
+Trois cas particuliers, tous traités :
+
+* **pas de piste audio** — on retombe sur une horloge absolue, en accumulant
+  les périodes plutôt qu'en dormant d'une durée fixe : un `sleep` de durée
+  fixe ferait dériver la lecture de plusieurs secondes sur un film entier ;
+* **vitesse autre que 1×** — le son est coupé et l'horloge redevient absolue.
+  Garder la hauteur demanderait un rééchantillonnage à tempo préservé ; ne pas
+  y toucher donnerait le miaulement d'une bande accélérée. Le choix est franc
+  et prévisible ;
+* **déplacement** — un conteneur ne se déplace qu'à une image-clé, parfois très
+  en amont. On décode et l'on **jette** jusqu'à l'instant demandé, puis on cale
+  l'horloge sur la première image conservée. Sans cela, l'horloge annoncerait
+  la position demandée pendant que l'écran montrerait le début du fichier.
 
 Trois shaders GLSL — un par norme — refont le même trajet que la bibliothèque,
-mais sur le processeur graphique. Mesuré sur une RTX 3090, source 1920×1080 :
+mais sur le processeur graphique. **Le chapitre 12 du cours leur est
+entièrement consacré** : ce qu'un fragment shader interdit, comment on
+contourne chaque interdit, et ce que le portage coûte en fidélité.
 
-| Norme | Grille de travail | Temps GPU | Cadence |
+Mesuré sur une RTX 3090, source 1920×1080, fenêtre 1440×1080 :
+
+| Norme | Grille de travail | Travail GPU | Image complète |
 |---|---|---|---|
-| NTSC-M | 753 × 480 à 14,32 MHz | 0,90 ms | ≈ 1100 im/s |
-| PAL-B/G | 921 × 576 à 17,73 MHz | 0,89 ms | ≈ 1120 im/s |
-| SECAM-L | 916 × 576 à 17,63 MHz | 1,15 ms | ≈ 870 im/s |
+| NTSC-M | 753 × 480 à 14,32 MHz | 0,11 ms | 0,48 ms |
+| PAL-B/G | 921 × 576 à 17,73 MHz | 0,14 ms | 0,49 ms |
+| SECAM-L | 916 × 576 à 17,63 MHz | 0,22 ms | 0,60 ms |
+
+La colonne « travail GPU » est ce que la carte passe réellement à calculer ; la
+colonne « image complète » y ajoute le pilote, l'échange de tampons et la boucle
+d'événements de Qt — soit 1 500 à 2 100 images par seconde de bout en bout.
 
 Mesure faite par requête `GL_TIME_ELAPSED`, seule méthode honnête : chronométrer
 des appels OpenGL avec l'horloge du processeur donne des cadences fantaisistes,
@@ -101,7 +142,8 @@ relative de la bande à rejeter.
 vidéo ──[codage]──> composite ──[décodage]──> image ──[présentation]──> écran
 ```
 
-Le SECAM en demande dix de plus, imposées par la modulation de fréquence : la
+Le SECAM en demande onze de plus — une passe de préparation et dix de somme
+préfixe — imposées par la modulation de fréquence : la
 phase y est l'**intégrale** du signal modulant depuis le début de la ligne, et
 un fragment shader ne connaît que son propre pixel. Aucune formule locale n'a
 pour dérivée le signal modulant. Une somme préfixe par doublement récursif
@@ -111,16 +153,24 @@ ne lisant que deux texels — coût négligeable devant une seule passe de filtr
 ### Ce que le GPU concède
 
 * les filtres analogiques (Butterworth d'ordre 4) deviennent des filtres à
-  réponse finie — un shader ne peut pas être récursif ;
+  réponse finie — un shader ne peut pas être récursif. Ils ne sont pas
+  synthétisés depuis un gabarit idéal mais **ajustés sur la réponse du
+  Butterworth aller-retour**, faute de quoi la bande passante s'affaisse de
+  2,9 dB à 1 MHz et toutes les transitions de couleur s'élargissent ;
 * le composite est échantillonné sur la grille de la norme plutôt qu'à quatre
   fois la sous-porteuse ;
-* les préaccentuations SECAM basse fréquence sont omises, transparentes à
-  l'aller-retour.
+* **la désaccentuation SECAM basse fréquence est omise** — son coude à 85 kHz
+  demanderait plus de deux cents coefficients. Elle n'est pas transparente pour
+  autant : sans elle, le discriminateur restituait les transitions avec un
+  dépassement de 0,26 en U contre 0,004 pour la référence, et cette frange
+  verte n'avait rien d'authentique. On en rend compte en resserrant la bande de
+  démodulation à 0,85 MHz — valeur mesurée, non déduite.
 
 L'écart avec le simulateur de référence est **mesuré**, pas supposé
-(`tests/test_shaders.py`) : ΔE\*ab médian de **0,70** en NTSC et **0,88** en PAL
-— sous le seuil de perception — et **3,44** en SECAM, où le piège de
-sous-porteuse à réponse finie n'égale pas le récursif de la référence.
+(`tests/test_shaders.py`, et figure 21 du cours) : ΔE\*ab médian de **0,69** en
+NTSC et **0,92** en PAL — sous le seuil de perception — et **4,44** en SECAM.
+L'erreur n'est pas répartie : elle est concentrée sur les transitions, là où la
+forme exacte des filtres compte.
 
 ### La définition du tube
 
@@ -175,6 +225,34 @@ Deux points d'implémentation :
 * le **seuil se règle en niveau affiché** mais se compare en lumière. Sans
   cette conversion, un réglage à 0,55 correspondrait en réalité à un gris de
   0,81 à l'écran.
+
+### La courbure de la dalle
+
+La dalle d'un tube n'est pas plate : c'est une **calotte sphérique**, sur
+laquelle le balayage peint l'image à longueur d'arc constante.
+
+Plutôt que la distorsion en barillet habituelle — sans signification physique,
+et dont les coefficients se règlent au jugé — la géométrie est faite pour de
+bon : un rayon part de l'œil, traverse le point d'écran considéré, et
+l'intersection avec la sphère n'est qu'une équation du second degré. Le point
+obtenu se convertit en longueur d'arc depuis le sommet, ce qui donne la
+coordonnée dans l'image. La projection azimutale équidistante ainsi obtenue
+conserve les distances radiales — exactement la façon dont le faisceau balaie
+la dalle.
+
+Le rayon s'exprime en demi-diagonales d'image, ce qui le rend indépendant du
+format comme de la résolution :
+
+| Réglage | Rayon | Sur un tube de 21 pouces | Époque |
+|---|---|---|---|
+| 1,00 | 1,6 | 42 cm | poste des années 60 |
+| 0,40 | 4,0 | 1,06 m | années 80 |
+| 0,16 | 10,0 | 2,65 m | dalle presque plate des derniers tubes |
+
+Les coins sont arrondis par une superellipse, et le calcul est court-circuité
+dès que le rayon dépasse quarante demi-diagonales : à plat, la courbure ne
+coûte rien. Mesuré : 0,18 à 0,36 ms selon le bombement — parfois *moins* qu'à
+plat, l'image occupant alors moins de pixels.
 
 Tous ces réglages agissent dans la passe de présentation, jamais dans la chaîne
 de signal : ce sont des caractéristiques d'**affichage**, et la comparaison
@@ -258,18 +336,18 @@ shaders/          les trois shaders GLSL, un par norme
   secam.glsl        modulation de fréquence, séquentielle
   scan.frag         somme préfixe : l'intégrale de phase du SECAM
   bloom.glsl        halation et épanouissement du faisceau
-  presentation.frag mise à l'échelle, définition du tube, lignes, masque
+  presentation.frag courbure de la dalle, définition du tube, lignes, masque
   sommet.vert       triangle plein écran, sans tampon de sommets
 
 lecteur/          le lecteur vidéo temps réel
   normes_gl.py      traduction des normes en uniformes, conception des noyaux
   gl_util.py        compilation, cibles de rendu, quad plein écran
   vue_gl.py         l'enchaînement des passes
-  source_video.py   décodage vidéo dans un fil séparé
+  source_video.py   décodage image et son, synchronisés sur l'horloge audio
   app.py            la fenêtre
 
 gui/              le banc de mesure PyQt5
-docs/             le cours, ses vingt figures, et leurs générateurs
+docs/             le cours, ses vingt-et-une figures, et leurs générateurs
 tests/            76 tests
 ```
 
@@ -312,7 +390,7 @@ Si un artefact n'apparaissait pas, ce serait la simulation qui aurait tort.
 run.bat                banc de mesure
 run.bat video [f.mp4]  lecteur vidéo
 run.bat tests          suite de vérification
-run.bat figures        régénère les vingt figures du cours
+run.bat figures        régénère les figures du cours
 run.bat html           reconstruit docs/cours.html
 run.bat tout           figures + html + tests
 run.bat install        installe les dépendances
@@ -322,7 +400,7 @@ run.bat aide           rappelle tout ceci
 Les figures et la page HTML se régénèrent aussi à la main :
 
 ```bash
-python docs/generer_figures.py              # les vingt
+python docs/generer_figures.py              # toutes
 python docs/generer_figures.py --seulement 05,07,10
 python docs/construire_html.py
 ```
@@ -335,4 +413,4 @@ Python 3.10 ou plus récent. Le lecteur vidéo demande en outre un pilote
 OpenGL 3.3.
 
 Testé sous Windows 11 avec Python 3.13, PyQt5 5.15.11, numpy 1.26, scipy 1.15,
-OpenCV 4.11, PyOpenGL 3.1, sur GeForce RTX 3090.
+PyOpenGL 3.1, PyAV 17.0 et sounddevice 0.5, sur GeForce RTX 3090.

@@ -28,7 +28,8 @@ le test qui le contrôle.
 9. [SECAM](#9-secam)
 10. [Décoder : réjecteur, peigne, et les artefacts qui en naissent](#10-décoder--réjecteur-peigne-et-les-artefacts-qui-en-naissent)
 11. [Ce que tout cela fait au RGB d'origine](#11-ce-que-tout-cela-fait-au-rgb-dorigine)
-12. [Annexes](#12-annexes)
+12. [Les shaders : la même chaîne, en temps réel](#12-les-shaders--la-même-chaîne-en-temps-réel)
+13. [Annexes](#13-annexes)
 
 ---
 
@@ -1234,7 +1235,439 @@ faisceau — le classement change du tout au tout, comme le montre le §11.5.
 
 ---
 
-## 12. Annexes
+## 12. Les shaders : la même chaîne, en temps réel
+
+Tout ce qui précède a été démontré sur une bibliothèque numpy qui prend
+quelques centaines de millisecondes par image. C'est parfait pour comprendre,
+et inutilisable pour regarder un film.
+
+Ce chapitre porte la même chaîne sur carte graphique. L'exercice n'a d'intérêt
+que si la contrainte est tenue jusqu'au bout : **le shader ne doit pas peindre
+les artefacts**, il doit refaire le calcul. Un moirage dessiné à la main serait
+plus rapide encore et n'apprendrait rien. La figure 21 mesure si le pari est
+tenu.
+
+### 12.1 Ce qu'un fragment shader sait faire, et ce qu'il ne sait pas
+
+Un *fragment shader* est une fonction appelée une fois par pixel, en parallèle,
+sans ordre garanti. De cette définition découlent trois interdits :
+
+1. **Pas de récursivité entre pixels.** Un filtre récursif calcule
+   $y_n = \sum a_k y_{n-k} + \sum b_k x_{n-k}$ : chaque sortie a besoin des
+   précédentes. Impossible. Tous les filtres deviennent non récursifs.
+2. **Pas d'accumulation le long d'une ligne.** Or la modulation de fréquence
+   du SECAM est *par définition* une intégrale depuis le début de la ligne.
+3. **Pas d'état d'une image à l'autre**, sinon en écrivant dans une texture et
+   en la relisant à la passe suivante.
+
+En échange, on obtient plusieurs milliers de cœurs et une bande passante de
+texture qui se compte en centaines de gigaoctets par seconde. Toute la
+conception consiste à échanger de la séquentialité contre du parallélisme.
+
+Même la géométrie disparaît. Il n'y a ni maillage, ni tampon de sommets : un
+seul triangle, dont les coordonnées sont déduites de `gl_VertexID`, couvre
+l'écran. Un triangle plutôt que deux, parce que le matériel rasterise par
+tuiles de 2×2 fragments et que la diagonale d'un quadrilatère fait calculer
+deux fois les fragments qu'elle traverse.
+
+> **Dans le code** — `shaders/sommet.vert`, dix lignes en tout.
+
+### 12.2 Le trajet, en passes
+
+Chaque passe lit une ou plusieurs textures et en écrit une. La chaîne complète :
+
+```
+image source (RGB 8 bits, n'importe quelle taille)
+  |
+  +- NTSC / PAL ------------------------------------------------+
+  |    passe CODAGE      matriçage, filtrage, modulation         |
+  |                      -> composite (R16F, 753x480 ou 921x576) |
+  |                                                              |
+  +- SECAM -------------------------------------------------+   |
+  |    passe PRÉPARATION  matriçage, filtrage, écart de fréq.|   |
+  |                       -> (écart, luma)   RG32F           |   |
+  |    10 passes SCAN     somme préfixe de l'écart           |   |
+  |                       -> intégrale de phase   R32F       |   |
+  |    passe CODAGE       synthèse de la porteuse FM         |   |
+  |                       -> composite (R16F, 916x576)       |   |
+  |                                                          v   v
+  |    passe DÉCODAGE    séparation Y/C, démodulation, matriçage inverse
+  |                      -> résultat (RGBA8, géométrie de la norme)
+  |
+  +- halo (facultatif, 3 passes au quart de résolution)
+  |    extraction + réduction -> flou horizontal -> flou vertical
+  |
+  +- passe PRÉSENTATION  courbure, réponse du tube, halo, lignes,
+                         masque -> fenêtre
+```
+
+Deux passes suffisent au NTSC et au PAL ; le SECAM en demande treize. Le
+chapitre 9 avait annoncé qu'il était la norme la plus coûteuse à décoder — le
+compte des passes le confirme, et pour exactement la même raison.
+
+> **Dans le code** — `lecteur/vue_gl.py`, méthodes `_passe_preparation`,
+> `_passes_scan`, `_passe_codage`, `_passe_decodage`, `_passes_halo`,
+> `_passe_presentation`.
+
+**La grille de calcul ne dépend pas de l'image source.** Une vidéo 1920×1080
+est rééchantillonnée dans la grille de la norme — 921×576 en PAL, quatre points
+par cycle de sous-porteuse — puis restituée à la taille de la fenêtre. C'est le
+téléviseur qui impose sa définition, pas le fichier, et c'est bien ainsi que
+les choses se passaient.
+
+### 12.3 L'horloge de sous-porteuse, et un piège de précision simple
+
+C'est la fonction la plus courte du projet, et la plus critique :
+
+$$\varphi(x, n) = 2\pi \left\{
+  \underbrace{\{\alpha\}}_{\text{image}} +
+  \underbrace{\left\{ \left\{\tfrac{f_{sc}}{f_H}\right\} \cdot n \right\}}_{\text{ligne } n} +
+  \underbrace{f_{sc} T_{\text{active}} \cdot x}_{\text{position } x}
+\right\}$$
+
+où $\{\cdot\}$ désigne la partie fractionnaire. Tout le comportement temporel
+des trois normes est là-dedans : les 180° par ligne du NTSC, les 270,576° du
+PAL, les 0° du SECAM, le rampement des points d'une image à l'autre.
+
+**Le piège.** Il serait naturel de calculer $f_{sc}/f_H \times n$ puis de
+prendre la partie fractionnaire à la fin. En PAL, $283{,}7516 \times 576 =
+163\,441$. Or un flottant simple précision n'a que 24 bits de mantisse : à
+cette grandeur, l'écart entre deux valeurs représentables — l'*ulp* — vaut
+$2^{17-23} = 0{,}015\,625$ cycle, c'est-à-dire **5,6° de teinte**. La rotation
+serait juste en haut de l'image et fausse en bas.
+
+En réduisant modulo 1 **terme à terme**, la valeur reste dans $[0, 1[$ où l'ulp
+vaut $6 \cdot 10^{-8}$ : l'erreur tombe sous le millionième de degré. La double
+précision n'existe pas dans un fragment shader ; il fallait donc que
+l'arithmétique soit bonne, pas que le format soit large.
+
+> **Dans le code** — `shaders/commun.glsl`, fonction `phase()`.
+
+### 12.4 Du filtre récursif au filtre non récursif
+
+`tvcolor` limite les bandes avec des Butterworth d'ordre 4 appliqués
+aller-retour (`sosfiltfilt`) : récursifs, à phase nulle, fidèles au réseau LC
+d'un vrai récepteur. Le shader n'a pas le droit d'être récursif. Il lui faut
+donc un filtre à réponse impulsionnelle finie, et le choisir demande plus de
+soin qu'il n'y paraît.
+
+**Le réflexe qui échoue.** Un sinus cardinal fenêtré — de Blackman, de
+Hamming — est la recette classique. Mesuré à 31 coefficients, il perd **2,9 dB
+à 1 MHz** là où la référence n'en perd que 0,95. Le temps de montée passe de
+neuf points à six, toutes les transitions de couleur s'élargissent, et sur le
+SECAM — où l'écart se cumule avec la modulation de fréquence et la mémoire de
+ligne — les franges deviennent franchement voyantes.
+
+**La solution.** On ne part pas d'un gabarit idéal, on **synthétise le noyau
+pour qu'il épouse la réponse du Butterworth aller-retour** de la référence,
+module au carré compris :
+
+$$|H_{\text{FIR}}(f)| \;\longleftarrow\; |H_{\text{Butterworth}}(f)|^2$$
+
+Les deux chaînes se répondent alors par construction, et non par chance.
+
+**Le réjecteur est un tout autre problème.** Un passe-bas n'a qu'un flanc à
+former ; un réjecteur en a deux, encadrant une bande étroite. Mesuré sur la
+bande SECAM :
+
+| coefficients | fenêtrage | Parks-McClellan (`remez`) |
+|---|---|---|
+| 21 | −11 dB | — |
+| 41 | −16 dB | **−34 dB** |
+| 61 | — | −45 dB |
+
+Seize décibels laissent la sous-porteuse parfaitement visible dans l'image. Le
+réjecteur a donc sa propre longueur, bien plus grande, et sa propre méthode de
+synthèse — l'équiondulation plutôt que le fenêtrage.
+
+| qualité | passe-bas | réjecteur |
+|---|---|---|
+| rapide | 13 | 31 |
+| normale | 21 | 41 |
+| haute | 31 | 61 |
+
+**Une erreur qu'il vaut la peine de raconter.** Ces longueurs sont des
+constantes de compilation, pour que le pilote déroule les boucles. Il paraissait
+donc raisonnable de les figer. C'est faux : un filtre non récursif se conçoit en
+fréquence **normalisée**. Doubler la finesse de la grille sans toucher au noyau
+divise par deux la largeur relative de la bande à rejeter, et le même nombre de
+coefficients ne sait plus la former. Mesuré sur le résidu de sous-porteuse
+d'une image blanche en SECAM : à grille double et noyaux inchangés, il passait
+de 2,1 à **17,6 niveaux sur 255** — huit fois pire, alors qu'on croyait
+raffiner. Les longueurs suivent maintenant la largeur de la grille.
+
+> **Dans le code** — `lecteur/normes_gl.py`, fonctions `noyau_passe_bas`,
+> `noyau_coupe_bande`, `noyau_demodulation_secam`.
+
+### 12.5 Une seule boucle, une seule lecture
+
+Les quatre noyaux de filtrage partagent la même longueur, quitte à compléter
+certains de zéros. Ce n'est pas de la négligence : cela permet de n'écrire
+qu'**une seule boucle** par passe, et donc de ne lire chaque texel qu'une fois
+pour alimenter à la fois la voie luminance et les deux voies de chrominance.
+
+```glsl
+for (int k = 0; k < N_TAPS; ++k)
+{
+    vec3 rgb = oetf(texture(u_source, v_uv + float(k - demi) * dh).rgb);
+    vec2 kuv = vers_uv(rgb);
+    y    += u_noyau_luma[k] * luma(rgb);
+    uv.x += u_noyau_c1[k]   * kuv.x;
+    uv.y += u_noyau_c2[k]   * kuv.y;
+}
+```
+
+Sur un processeur graphique, une lecture de texture coûte des dizaines de fois
+plus cher qu'une multiplication. Multiplier par zéro est gratuit ; relire le
+même texel ne l'est pas.
+
+### 12.6 NTSC et PAL : le même fichier, compilé deux fois
+
+`ntsc.glsl` contient le codeur **et** le décodeur, séparés par un `#ifdef
+PASSE_CODAGE`. Ce n'est pas une économie de lignes, c'est une garantie : les
+deux moitiés partagent littéralement la même fonction `phase()`. Si l'horloge
+du codeur et celle du décodeur divergeaient d'un iota, toutes les teintes
+tourneraient — et le bogue serait indétectable à la lecture, puisque chaque
+moitié serait juste isolément.
+
+Le PAL, lui, tient dans un signe :
+
+```glsl
+float chroma = gain * (uv.x * sin(phi) + signe_pal(ligne) * uv.y * cos(phi));
+```
+
+Le décodeur y ajoute la ligne à retard, et le peigne à **deux** lignes plutôt
+qu'une — pour la raison démontrée au §10.2 : $2 \times 270{,}576° \equiv
+181{,}15°$, assez proche de l'inversion pour que la soustraction annule la
+luminance.
+
+### 12.7 SECAM : l'intégrale qu'un shader ne sait pas faire
+
+En modulation de fréquence, la phase est l'intégrale du signal modulant :
+
+$$\varphi(x) = 2\pi \int_0^x \big( f_{\text{repos}} + \Delta f(t) \big)\,dt$$
+
+Un fragment ne connaît que son propre pixel, et aucune formule locale n'a pour
+dérivée le signal modulant : il faut réellement calculer l'intégrale. On la
+calcule donc **en parallèle**, par la somme préfixe de Hillis et Steele. À
+l'étape d'écart $e$, chaque échantillon ajoute celui qui se trouve $e$
+positions plus à gauche :
+
+$$x \leftarrow x + x_{-1}, \qquad
+  x \leftarrow x + x_{-2}, \qquad
+  x \leftarrow x + x_{-4}, \ \ldots$$
+
+Après $\lceil \log_2 W \rceil$ étapes, chaque échantillon contient la somme de
+tous ceux qui le précèdent. Pour une ligne de 916 points : **dix passes**, dont
+chacune ne lit que deux texels. Le coût total est négligeable devant celui
+d'une seule passe de filtrage — on a remplacé une boucle séquentielle de 916
+tours par dix passes entièrement parallèles.
+
+Un détail d'échelle mérite d'être noté : l'écart de fréquence est rangé **en
+cycles par échantillon** et non en hertz. La somme préfixe reste alors dans les
+dizaines, là où des hertz atteindraient la centaine de millions et mangeraient
+toute la précision disponible.
+
+> **Dans le code** — `shaders/scan.frag`, et le bloc `PASSE_PREPARATION` de
+> `shaders/secam.glsl`.
+
+**Le discriminateur.** Au décodage, on ramène la sous-porteuse en bande de base
+avec un oscillateur local calé sur la fréquence de repos, en phase puis en
+quadrature ; l'écart de fréquence est l'avance d'argument du vecteur complexe
+obtenu, d'un échantillon au suivant :
+
+$$\Delta\varphi = \arg\big( z_{x+1} \cdot \overline{z_x} \big), \qquad
+  \Delta f = \frac{\Delta\varphi}{2\pi}\, f_e$$
+
+Prendre l'argument revient à ignorer le module : c'est le **limiteur**, obtenu
+gratuitement, et c'est de là que vient l'insensibilité du SECAM au gain
+démontrée au chapitre 9.
+
+Les deux positions $x$ et $x+1$ partagent presque tous leurs échantillons ; une
+seule boucle les alimente donc toutes les deux, avec un décalage d'indice sur
+le noyau — $N+1$ lectures au lieu de $2N$. Cette boucle compte bien $N+1$
+tours, et le détail est vital : à $N$ tours, l'accumulateur de $x+1$ perdrait
+son dernier coefficient, son noyau deviendrait asymétrique, et il introduirait
+un déphasage propre — exactement la grandeur que l'on cherche à mesurer. Avec
+treize coefficients, ce biais suffisait à faire décrocher complètement le
+décodeur.
+
+**Le passe-bas du mélangeur a son propre cahier des charges**, et lui donner
+celui des autres a coûté cher. Le mélangeur transpose la luminance continue —
+qui vaut jusqu'à 1,0 — à la fréquence de repos, où la porteuse ne pèse que
+0,246 après le filtre cloche. Or le discriminateur mesure une *phase* : une
+fuite relative $\varepsilon$ de la luminance produit une erreur de chrominance
+
+$$\frac{\varepsilon \, f_e}{2\pi \, \Delta f_{\max}} \approx 10\,\varepsilon$$
+
+Un pour-cent de fuite fait dix pour-cent d'erreur de couleur. Il faut donc une
+réjection de l'ordre de **74 dB**, et surtout *garantie* : un noyau ajusté sur
+une réponse de Butterworth laisse une ondulation dont la position dépend de la
+longueur, et l'on mesurait 68 dB à 21 coefficients, 58 à 25, 56 à 29 — la
+qualité du rendu variait de façon erratique avec un réglage censé l'améliorer.
+Une fenêtre de Kaiser, elle, garantit un plancher choisi d'avance, et monotone.
+
+> **Dans le code** — `lecteur/normes_gl.py`,
+> `longueur_minimale_discriminateur`, qui *déduit* la longueur du budget
+> d'erreur de couleur au lieu de l'inscrire en dur.
+
+### 12.8 La passe de présentation : ce que le tube fait de l'image
+
+Les passes précédentes produisent l'image telle que le décodeur la restitue.
+Reste à la montrer, et un tube cathodique n'est pas un moniteur plat.
+
+**La réponse du tube.** Le spot du faisceau a une largeur finie, et
+l'amplificateur vidéo sa propre bande passante ; leur effet combiné se modélise
+très bien par une gaussienne, dont la transformée est elle-même gaussienne :
+
+$$\text{MTF}(f) = e^{-2\pi^2 \sigma^2 f^2}$$
+
+On paramètre par la grandeur que les constructeurs affichaient — les **lignes
+de résolution horizontale** — en calant la gaussienne pour que la modulation
+tombe à 10 % à la limite annoncée. C'est la pièce qui manquait le plus : un
+téléviseur d'appartement affichait 300 à 400 lignes, et restituait donc la
+sous-porteuse — à 229 alternances par largeur d'image — à moins du quart de son
+amplitude. Un écran plat la rend intégralement, et le résidu que le réjecteur a
+laissé passer y devient bien plus voyant qu'il ne l'a jamais été sur un tube.
+
+**La courbure.** Plutôt qu'une distorsion en barillet dont les coefficients se
+règlent au jugé, on fait la géométrie pour de bon : un rayon part de l'œil,
+traverse le point d'écran considéré, coupe la sphère de la dalle — une simple
+équation du second degré — et l'on convertit le point obtenu en longueur d'arc
+depuis le sommet. La projection azimutale équidistante ainsi obtenue conserve
+les distances radiales, ce qui est exactement la façon dont le faisceau balaie
+la dalle.
+
+**Les lignes de balayage, et un piège d'échantillonnage instructif.** Le profil
+d'une ligne vaut $\sin^2(\pi y)$. L'échantillonner ponctuellement serait une
+faute, et une faute visible : une fenêtre de 760 pixels de haut ne donne que
+1,32 pixel par ligne pour 576 lignes, soit moins que les deux qu'exige Shannon.
+On intègre donc le profil sur la surface du pixel, et l'intégrale est
+analytique :
+
+$$\Big\langle \tfrac{1 - \cos 2\pi y}{2} \Big\rangle_{\text{pixel}}
+ = \frac{1}{2} - \frac{1}{2}\cos(2\pi y_0)\,
+   \operatorname{sinc}(g_x)\,\operatorname{sinc}(g_y)$$
+
+où $g_x$ et $g_y$ sont les dérivées du numéro de ligne selon les deux axes de
+l'écran, et $\operatorname{sinc}(w) = \sin(\pi w)/(\pi w)$.
+
+**Les deux axes** — et c'est là que se jouait un défaut tenace. La fonction
+`fwidth` de GLSL renvoie $|g_x| + |g_y|$, une somme, donc une majoration. Dalle
+plate, elle ne coûte rien : $g_x$ est nul, les lignes du tube étant parallèles
+à celles du moniteur. Dès qu'on bombe la dalle, elles cessent de l'être : une
+ligne de balayage se courbe, et traverse les pixels en biais. La somme
+franchissait alors 1, valeur où le sinus cardinal s'annule, et le motif de
+balayage **disparaissait purement et simplement dans les quatre coins**. Mesuré
+à courbure maximale sur une fenêtre de 760 pixels de haut :
+
+| point | $\lvert g_x \rvert$ | $\lvert g_y \rvert$ | par `fwidth` | intégrale exacte |
+|---|---|---|---|---|
+| centre | 0,000 | 0,647 | 0,440 | 0,440 |
+| coin | 0,082 | 0,773 | 0,164 | **0,267** |
+| coin extrême | 0,126 | 0,831 | 0,041 | **0,189** |
+
+Le produit de deux sinus cardinaux est l'intégrale exacte du motif sur le carré
+du pixel ; la somme n'en était qu'une approximation, et une mauvaise.
+
+**Une limite qu'aucun shader ne franchira**, enfin, et qu'il vaut mieux nommer
+que masquer : 576 lignes dans une fenêtre de 760 pixels font 1,32 pixel par
+ligne. Shannon en demande deux. En dessous, le motif ne peut être qu'atténué —
+ce que fait l'intégrale — ou replié, ce qui donne un moirage. Il faut 1 152
+pixels de haut pour que les lignes existent vraiment, le double pour qu'elles
+soient franches. Le lecteur affiche le chiffre, et le signale quand il passe
+sous la limite.
+
+> **Dans le code** — `shaders/presentation.frag`.
+
+### 12.9 Le shader dit-il la même chose que le simulateur ?
+
+![Shader contre référence](figures/21_shader_contre_reference.png)
+
+Trois normes, la même mire : à gauche la chaîne de référence, au milieu la
+chaîne GPU, à droite l'écart colorimétrique amplifié vingt fois.
+
+| norme | ΔE\*ab médian | 90ᵉ centile |
+|---|---|---|
+| NTSC-M | 0,69 | 7,7 |
+| PAL-B/G | 0,92 | 7,2 |
+| SECAM-L | 4,44 | 24,0 |
+
+Un ΔE de 1 est le seuil de perception. Le NTSC et le PAL sont donc **sous le
+seuil en médiane** : dans les aplats, les deux chaînes donnent la même couleur.
+La carte de droite montre pourquoi — l'écart n'est pas réparti, il est
+**concentré sur les transitions**. C'était prévisible : c'est là que la forme
+exacte des filtres compte, et c'est précisément là que le shader approxime.
+
+Le SECAM est plus loin, et pour deux raisons identifiées :
+
+- **la désaccentuation basse fréquence n'est pas implémentée.** Le filtre
+  normatif $A(f) = (1 + jf/f_1)/(1 + jf/3f_1)$, avec $f_1 = 85$ kHz, a son
+  coude si bas qu'à 17,6 MHz d'échantillonnage il demanderait plus de deux
+  cents coefficients — hors de portée du budget d'uniformes. Son effet est
+  pourtant mesurable : il atténue de 7 dB dès 255 kHz. Sans lui, le
+  discriminateur restituait les transitions avec un **dépassement de 0,26 en
+  $U$** là où la référence n'en montre que 0,004, et ce dépassement dessinait
+  une frange verte vive sur les contours — l'artefact le plus voyant du SECAM
+  simulé, et il n'avait rien d'authentique. On en rend compte en resserrant la
+  bande de démodulation à 0,85 MHz, valeur non pas déduite mais **mesurée** :
+  on balaie la coupure et l'on garde celle qui minimise l'écart à la référence.
+  Le dépassement retombe alors à 0,058, et la transition à 14 points contre 13 ;
+- **le réjecteur est un filtre non récursif** là où la référence emploie un
+  Butterworth récursif, hors de portée d'un shader.
+
+Ces deux écarts sont documentés, bornés par un test, et **c'est là tout ce
+qu'on peut honnêtement demander** à un portage : non pas qu'il soit identique,
+mais qu'il diffère de façon connue et mesurée.
+
+> **Vérifié par** — `tests/test_shaders.py::test_accord_avec_le_simulateur`,
+> qui borne le ΔE médian à 1,5 pour le NTSC et le PAL, à 8 pour le SECAM.
+
+### 12.10 Ce que cela coûte en temps
+
+Mesuré par requête `GL_TIME_ELAPSED` — la seule façon honnête de chronométrer
+un processeur graphique. L'horloge murale, elle, ment : l'appel de dessin rend
+la main bien avant que le travail soit fait, et l'on peut « mesurer » ainsi
+900 000 images par seconde.
+
+Source 1920×1080, fenêtre 1440×1080, grille normative, qualité normale, sur une
+RTX 3090 :
+
+| configuration | travail GPU | image complète |
+|---|---|---|
+| NTSC-M, codage + décodage seuls | 0,11 ms | 0,48 ms |
+| PAL-B/G, codage + décodage seuls | 0,14 ms | 0,49 ms |
+| SECAM-L, codage + décodage seuls | 0,22 ms | 0,60 ms |
+| PAL-B/G, tube complet et halo | 0,19 ms | 0,54 ms |
+| SECAM-L, tube complet et halo | 0,28 ms | 0,65 ms |
+
+La colonne « travail GPU » est ce que la carte passe réellement à calculer ; la
+colonne « image complète » y ajoute le pilote, l'échange de tampons et la
+boucle d'événements de Qt. Même la seconde tient entre 1 500 et 2 100 images
+par seconde — de quoi lire une vidéo à 25 images par seconde en n'occupant
+qu'un à deux pour cent du temps disponible.
+
+L'effet de la qualité, à norme constante (PAL-B/G, travail GPU) :
+
+| qualité | coefficients | travail GPU |
+|---|---|---|
+| rapide | 13 / 31 | 0,15 ms |
+| normale | 21 / 41 | 0,18 ms |
+| haute | 31 / 61 | 0,22 ms |
+
+Le coût croît presque linéairement avec le nombre de coefficients, ce qui est
+attendu : la boucle de filtrage domine, et chaque tour coûte une lecture de
+texture.
+
+**Le SECAM reste le plus cher des trois**, de bout en bout : treize passes au
+lieu de deux, et un discriminateur qui lit $N+1$ échantillons par fragment
+contre $N$. Le chapitre 9 l'avait annoncé pour des raisons de principe ; la
+mesure le confirme en microsecondes. C'est peut-être la meilleure preuve que le
+portage a gardé la physique intacte.
+
+---
+
+## 13. Annexes
 
 ### A. Tableau des constantes
 
@@ -1385,15 +1818,38 @@ tvcolor/          la bibliothèque de simulation (numpy pur, sans Qt)
   mires.py          les mires de test
   mesures.py        vectorscope, spectres, ΔE, résolutions
 
-gui/              l'interface PyQt5
-tests/            58 tests, dont ceux cités tout au long de ce cours
+shaders/          la même chaîne en GLSL (chapitre 12)
+  sommet.vert       le triangle plein écran, sans tampon de sommets
+  commun.glsl       entête partagé : matriçage, horloge, bruit
+  ntsc.glsl         codeur et décodeur NTSC, un seul fichier
+  pal.glsl          idem, plus l'alternance de V et le peigne 2H
+  secam.glsl        préparation, codage FM, discriminateur
+  scan.frag         somme préfixe — l'intégrale de phase du SECAM
+  bloom.glsl        halation et épanouissement du faisceau
+  presentation.frag courbure, réponse du tube, lignes de balayage
+
+lecteur/          le lecteur vidéo temps réel (PyQt5 + OpenGL)
+  normes_gl.py      les normes traduites en noyaux et en uniformes
+  gl_util.py        compilation, cibles de rendu, quad plein écran
+  vue_gl.py         l'enchaînement des passes, et leur chronométrage
+  source_video.py   démultiplexage PyAV, son maître de l'horloge
+  app.py            la fenêtre et ses réglages
+
+gui/              l'interface PyQt5 d'analyse d'une image fixe
+tests/            76 tests, dont ceux cités tout au long de ce cours
 docs/             ce document et son générateur de figures
 ```
 
-**Lancer l'interface :**
+**Lancer l'interface d'analyse :**
 
 ```bash
 python -m gui
+```
+
+**Lancer le lecteur vidéo :**
+
+```bash
+python -m lecteur ma_video.mp4
 ```
 
 **Régénérer toutes les figures :**
@@ -1414,3 +1870,9 @@ fois la sous-porteuse, puis décodé comme le ferait un téléviseur. Les
 artefacts — points rampants, moirages irisés, barres de Hanover, feu SECAM —
 ne sont **jamais dessinés**. Ils émergent du calcul. C'est la seule façon
 d'être sûr que ce que l'on regarde est vrai.
+
+Et il vaut pour les deux implémentations. Le chapitre 12 raconte comment la
+même chaîne a été portée sur carte graphique pour tourner à plusieurs
+centaines d'images par seconde ; la figure 21 mesure ce que le portage a
+coûté en fidélité. Un shader qui aurait peint les artefacts au lieu de les
+calculer aurait été plus rapide encore — et n'aurait rien démontré du tout.

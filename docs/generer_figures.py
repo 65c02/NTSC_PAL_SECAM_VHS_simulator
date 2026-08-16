@@ -891,6 +891,95 @@ def figure_20_primaires(dossier: Path) -> Path:
 
 
 # ===========================================================================
+# 8. Le portage sur carte graphique
+# ===========================================================================
+
+def _vue_opengl():
+    """Ouvre une vue OpenGL hors écran, ou `None` si le poste n'en a pas.
+
+    C'est la seule figure du cours qui ait besoin d'autre chose que de numpy.
+    On préfère la sauter proprement plutôt que faire échouer la génération
+    complète sur une machine sans pilote graphique — un serveur d'intégration,
+    par exemple.
+    """
+    try:
+        from PyQt5 import QtGui, QtWidgets
+
+        format_gl = QtGui.QSurfaceFormat()
+        format_gl.setVersion(3, 3)
+        format_gl.setProfile(QtGui.QSurfaceFormat.CoreProfile)
+        format_gl.setSwapInterval(0)
+        QtGui.QSurfaceFormat.setDefaultFormat(format_gl)
+        application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+        from lecteur.vue_gl import VueTelevision
+
+        vue = VueTelevision()
+        vue.resize(640, 480)
+        vue.show()
+        application.processEvents()
+        return vue, application
+    except Exception as raison:      # pilote absent, PyOpenGL manquant, etc.
+        print(f"      (pas de contexte OpenGL : {raison})")
+        return None, None
+
+
+@figure("21", "Le shader dit-il la même chose que le simulateur ?")
+def figure_21_shader_contre_reference(dossier: Path) -> Path | None:
+    """Confronte la chaîne temps réel à la chaîne de référence.
+
+    C'est la figure qui justifie tout le chapitre 12 : si le portage sur carte
+    graphique ne redonnait pas ce que calcule `tvcolor`, il ne serait qu'un
+    filtre d'apparence de plus. L'écart affiché est un vrai ΔE*ab, mesuré pixel
+    à pixel, et amplifié pour être visible.
+    """
+    from lecteur.vue_gl import ParametresRendu
+
+    vue, application = _vue_opengl()
+    if vue is None:
+        return None
+
+    mire = mires.barres_couleur(288, 384)
+    codes = ("NTSC-M", "PAL-BG", "SECAM-L")
+    fig, axes = plt.subplots(len(codes), 3, figsize=(11.0, 8.4))
+
+    for rang, code in enumerate(codes):
+        vue.appliquer(ParametresRendu(norme=code, animer=False))
+        vue.definir_image((np.clip(mire, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+        application.processEvents()
+        rendu = vue.image_rendue()
+        if rendu is None:
+            plt.close(fig)
+            print("      (le rendu n'a rien produit)")
+            return None
+        obtenu = rendu.astype(np.float64) / 255.0
+
+        params = Parametres(norme=code, taille_sortie=obtenu.shape[:2])
+        if code.startswith("SECAM"):
+            params.decodage.separateur = "notch"
+        attendu = encoder_decoder(mire, params).finale
+
+        ecart = col.delta_e_76(col.srgb_vers_lab(obtenu), col.srgb_vers_lab(attendu))
+        # On écarte une bande aux bords : la référence code la ligne entière,
+        # suppression comprise, quand le shader s'arrête au bord de l'image.
+        interieur = ecart[20:-20, 30:-30]
+
+        _image(axes[rang][0], attendu, f"{code} — simulateur de référence")
+        _image(axes[rang][1], obtenu, f"{code} — shader")
+        axes[rang][2].imshow(np.clip(ecart / 20.0, 0.0, 1.0), cmap="inferno")
+        axes[rang][2].set_xticks([]); axes[rang][2].set_yticks([])
+        axes[rang][2].grid(False)
+        axes[rang][2].set_title(
+            f"ΔE*ab ×20 — médiane {np.median(interieur):.2f}, "
+            f"90ᵉ centile {np.percentile(interieur, 90):.1f}"
+        )
+
+    vue.close()
+    fig.tight_layout()
+    return _enregistrer(fig, dossier, "21", "shader_contre_reference")
+
+
+# ===========================================================================
 
 def principal(argv=None) -> int:
     analyseur = argparse.ArgumentParser(description=__doc__)
@@ -916,7 +1005,11 @@ def principal(argv=None) -> int:
             continue
         debut = time.perf_counter()
         chemin = fonction(dossier)
-        print(f"  {numero}  {fonction.titre:52s} {time.perf_counter() - debut:5.1f} s"
+        duree = time.perf_counter() - debut
+        if chemin is None:      # figure sautée faute de moyens (cf. figure 21)
+            print(f"  {numero}  {fonction.titre:52s} {duree:5.1f} s  → sautée")
+            continue
+        print(f"  {numero}  {fonction.titre:52s} {duree:5.1f} s"
               f"  → {chemin.name}")
     print(f"\nTerminé en {time.perf_counter() - total:.1f} s — {dossier}")
     return 0

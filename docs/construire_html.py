@@ -212,8 +212,17 @@ class Convertisseur:
         if premiere.endswith("$$") and len(premiere) > 4:
             sortie.append(maths_html.bloc(premiere[2:-2]))
             return i + 1
-        i += 1
+
         corps = []
+        # Ce qui suit le `$$` ouvrant appartient à la formule. L'oublier
+        # faisait disparaître la PREMIÈRE LIGNE de toute formule écrite sur
+        # plusieurs lignes — huit d'entre elles dans ce cours, dont le membre
+        # de gauche de la séparation Y/C au chapitre 10. Le Markdown restait
+        # juste, seule la page HTML mentait, et rien ne le signalait.
+        debut = premiere[2:].strip()
+        if debut:
+            corps.append(debut)
+        i += 1
         while i < len(lignes) and not lignes[i].strip().endswith("$$"):
             corps.append(lignes[i])
             i += 1
