@@ -21,6 +21,7 @@ aucun tampon de sommets n'existe : tout le travail est dans le fragment shader.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -76,6 +77,17 @@ class ParametresRendu:
     halo_rayon: float = 0.025
     """Rayon du halo, en fraction de la hauteur d'image — donc indépendant de
     la résolution de la grille comme de celle de l'écran."""
+
+    courbure: float = 0.0
+    """Bombement de la dalle, de 0 (plate) à 1 (tube très rond des années 60).
+
+    Traduit en rayon de courbure, exprimé en demi-diagonales d'image : 1
+    donne 1,6 — soit 42 cm pour un tube de 21 pouces, un poste des années 60 ;
+    0,4 donne 4, typique des années 80 ; 0,16 donne 10, la dalle presque plate
+    des derniers tubes."""
+
+    arrondi_coins: float = 0.0
+    """Arrondi des coins, de 0 (angles vifs) à 1 (très arrondi)."""
 
     definition_tube: float = 0.0
     """Définition horizontale du tube, en lignes. 0 désactive la simulation du
@@ -293,8 +305,35 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._recompiler = True
         return True
 
+    def pixels_par_ligne(self) -> float:
+        """Nombre de pixels d'écran qui reviennent à une ligne de balayage.
+
+        La grandeur décide de ce que la fenêtre est capable de montrer, et
+        aucun raffinement de shader ne la contourne. Restituer un motif d'une
+        ligne claire et d'une ligne sombre demande deux pixels par ligne, et
+        Shannon ne se négocie pas : en dessous, le motif ne peut être
+        qu'atténué — c'est ce que fait l'intégration analytique du profil — ou
+        replié, ce qui donne un moirage. En 625 lignes il faut donc une fenêtre
+        d'au moins 1 152 pixels de haut pour que les lignes existent vraiment,
+        et le double pour qu'elles soient franches.
+        """
+        if self._reglage is None:
+            return 0.0
+        ratio = self.devicePixelRatioF()
+        largeur = max(1, int(self.width() * ratio))
+        hauteur = max(1, int(self.height() * ratio))
+        echelle, _ = self._cadrage(largeur, hauteur)
+        return echelle[1] * hauteur / self._reglage.hauteur
+
     def description(self) -> str:
-        return self._reglage.description() if self._reglage else ""
+        if self._reglage is None:
+            return ""
+        finesse = self.pixels_par_ligne()
+        if finesse >= 2.0:
+            note = f"{finesse:.2f} pixel par ligne"
+        else:
+            note = f"{finesse:.2f} pixel par ligne — sous la limite de Shannon"
+        return f"{self._reglage.description()} · {note}"
 
     def image_rendue(self) -> np.ndarray | None:
         """Relit le résultat décodé, à la géométrie de la norme. Pour les tests.
@@ -540,6 +579,27 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             "u_sigma_tube",
             sigma_du_tube(p.definition_tube, self._reglage.largeur),
         )
+        # Géométrie de la dalle. Les demi-dimensions sont exprimées en
+        # demi-diagonales d'image, ce qui rend le rayon de courbure
+        # indépendant du format et de la résolution.
+        aspect = echelle[0] * largeur / max(echelle[1] * hauteur, 1.0)
+        diagonale = math.hypot(aspect, 1.0)
+        programme.definir("u_demi_largeur", float(aspect / diagonale))
+        programme.definir("u_demi_hauteur", float(1.0 / diagonale))
+        programme.definir(
+            "u_rayon_dalle", float(1.6 / max(p.courbure, 0.02))
+        )
+        # Distance d'observation : six demi-diagonales, soit environ 1,6 m
+        # devant un tube de 21 pouces. C'est ce qui donne la perspective ;
+        # à l'infini, la dalle ne se creuserait plus, elle s'étirerait.
+        programme.definir("u_distance_oeil", 6.0)
+        # Exposant de la superellipse : très grand pour des angles vifs, 2,2
+        # pour un coin franchement rond.
+        programme.definir(
+            "u_coins",
+            0.0 if p.arrondi_coins <= 0.0 else float(12.0 - 9.8 * min(p.arrondi_coins, 1.0)),
+        )
+
         programme.definir("u_halo", 1)
         programme.definir("u_halo_intensite", float(p.halo_intensite))
         programme.definir("u_gamma", float(self._reglage.norme.gamma_affichage))

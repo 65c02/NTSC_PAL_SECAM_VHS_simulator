@@ -31,9 +31,74 @@ uniform float u_sigma_tube;      // spot du faisceau, en points de la grille
 uniform sampler2D u_halo;
 uniform float u_halo_intensite;  // fraction de lumière repartie en halo
 uniform float u_gamma;           // gamma de l'écran, pour passer en lumière
+uniform float u_rayon_dalle;     // rayon de la dalle, en demi-diagonales d'image
+uniform float u_distance_oeil;   // distance d'observation, même unité
+uniform float u_demi_largeur;    // demi-largeur de l'image, en demi-diagonales
+uniform float u_demi_hauteur;
+uniform float u_coins;           // arrondi des coins, exposant de la superellipse
+
+// ---------------------------------------------------------------- courbure
+
+// Position sur la dalle vue depuis l'œil, en demi-diagonales d'image.
+//
+// La dalle d'un tube n'est pas plate : c'est une calotte sphérique, et le
+// balayage y peint l'image à longueur d'arc constante. Plutôt que d'appliquer
+// la distorsion en barillet habituelle — qui n'a pas de sens physique et dont
+// les coefficients se règlent au jugé — on fait la géométrie pour de bon :
+//
+//   1. un rayon part de l'œil et traverse le point d'écran considéré ;
+//   2. on l'intersecte avec la sphère de la dalle, ce qui n'est qu'une
+//      équation du second degré ;
+//   3. on convertit le point obtenu en longueur d'arc depuis le sommet, ce
+//      qui donne la coordonnée dans l'image.
+//
+// La projection azimutale équidistante ainsi obtenue conserve les distances
+// radiales, ce qui est exactement la façon dont le faisceau balaie la dalle.
+vec2 sur_la_dalle(vec2 p)
+{
+    float R = u_rayon_dalle;
+    float D = u_distance_oeil;
+    float u = dot(p, p);
+
+    // t²(u + D²) − 2tD(R + D) + D(D + 2R) = 0
+    float a = u + D * D;
+    float b = -2.0 * D * (R + D);
+    float c = D * (D + 2.0 * R);
+    float discriminant = max(b * b - 4.0 * a * c, 0.0);
+    float t = (-b - sqrt(discriminant)) / (2.0 * a);   // la plus proche
+
+    float distance_axe = t * sqrt(u);
+    if (distance_axe < 1e-6)
+        return p * t;
+
+    float arc = R * asin(clamp(distance_axe / R, -1.0, 1.0));
+    return p * (arc / sqrt(u));
+}
+
+// Coordonnée d'image [-1,1] correspondant à un point d'écran [-1,1].
+vec2 courber(vec2 n)
+{
+    if (u_rayon_dalle > 40.0)   // au-delà, la dalle est plate à l'œil
+        return n;
+
+    vec2 demi = vec2(u_demi_largeur, u_demi_hauteur);
+
+    // Le facteur de normalisation est évalué au coin de l'image, de sorte que
+    // le coin de la dalle tombe sur le coin du cadre : l'image tient tout
+    // entière, et ce sont les bords qui se creusent — ce que montre un tube.
+    float k = length(sur_la_dalle(demi));
+    return sur_la_dalle(n * demi) / (k * demi);
+}
 
 in  vec2 v_uv;
 out vec4 sortie;
+
+// sin(πw)/(πw), prolongé par continuité en zéro.
+float sinus_cardinal(float w)
+{
+    float x = PI * w;
+    return (abs(x) < 1e-4) ? 1.0 : sin(x) / x;
+}
 
 const int TAPS_TUBE = 9;
 
@@ -72,12 +137,35 @@ vec3 reponse_du_tube(vec2 uv)
 void main()
 {
     vec2 uv = (v_uv - u_decalage) / u_echelle;
+    vec2 n = courber(uv * 2.0 - 1.0);
 
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+    // Franchement au large : rien à calculer. La marge est volontairement
+    // généreuse — les dérivées `dFdx`/`dFdy` se prennent sur des groupes de
+    // quatre fragments, et un voisin sorti prématurément les rendrait fausses
+    // tout le long du bord.
+    if (max(abs(n.x), abs(n.y)) > 1.05)
     {
         sortie = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
+
+    // Bord de la dalle. Les coins d'un tube ne sont pas des angles vifs mais
+    // des arrondis, que décrit une superellipse |x|^p + |y|^p = 1 : plus p est
+    // grand, plus le coin est franc.
+    //
+    // On mesure la couverture du pixel au lieu de trancher par oui ou non. Un
+    // simple test binaire donnait un escalier de marches d'un pixel, et il se
+    // voyait d'autant mieux que le bord était oblique — c'est-à-dire
+    // précisément dans les coins d'une dalle bombée. `fwidth` de la fonction
+    // implicite donne la largeur de la transition, ce qui adoucit le bord
+    // exactement d'un pixel, ni plus ni moins.
+    float bord = max(abs(n.x), abs(n.y)) - 1.0;
+    if (u_coins > 0.0)
+        bord = max(bord, pow(abs(n.x), u_coins) + pow(abs(n.y), u_coins) - 1.0);
+    float epaisseur = max(fwidth(bord), 1e-5);
+    float couverture = 1.0 - smoothstep(-0.5 * epaisseur, 0.5 * epaisseur, bord);
+
+    uv = n * 0.5 + 0.5;
 
     // Retournement vertical, et il n'est pas cosmétique.
     //
@@ -103,10 +191,48 @@ void main()
 
     if (u_lignes > 0.0)
     {
-        // Position à l'intérieur de la ligne de balayage courante.
-        float dans_la_ligne = fract(uv.y * u_taille_source.y);
-        float profil = sin(dans_la_ligne * PI);
-        rgb *= mix(1.0, profil * profil, u_lignes);
+        // Profil des lignes de balayage, INTÉGRÉ sur la surface du pixel.
+        //
+        // L'échantillonner ponctuellement serait une faute, et une faute
+        // visible : une fenêtre de 760 pixels de haut ne donne que 1,3 pixel
+        // par ligne pour 576 lignes, soit moins que les deux qu'exige
+        // Shannon. Le motif bat alors avec la grille de pixels. À plat le
+        // battement est uniforme et passe pour du grain ; sous courbure le pas
+        // local varie, le battement balaie l'image, et l'on voit apparaître de
+        // larges bandes qui n'ont aucune existence physique. Mesuré : le moiré
+        // triplait entre une dalle plate et une dalle bombée.
+        //
+        // L'intégrale, elle, est analytique. Le profil vaut
+        //     sin²(πy) = (1 − cos 2πy) / 2
+        // et sa moyenne sur le carré du pixel se sépare exactement :
+        //     ⟨cos 2π·ligne⟩ = cos(2π·ligne₀) · sinc(gx) · sinc(gy)
+        // où gx et gy sont les dérivées du numéro de ligne selon les deux axes
+        // de l'écran, et sinc(w) = sin(πw)/(πw).
+        //
+        // Les DEUX axes, et c'est là que se jouait le défaut. `fwidth` renvoie
+        // |gx| + |gy| — une somme, donc une majoration. Tant que la dalle est
+        // plate elle ne coûte rien, gx étant nul : les lignes du tube sont
+        // parallèles aux lignes de l'écran. Dès qu'on bombe la dalle, elles
+        // cessent de l'être — une ligne de balayage se courbe, elle traverse
+        // les pixels en biais, et gx cesse d'être nul dans les coins.
+        //
+        // La somme y franchissait 1, valeur où le sinus cardinal s'annule, et
+        // le motif de balayage DISPARAISSAIT purement et simplement dans les
+        // quatre coins alors que rien ne le justifiait. Mesuré à courbure
+        // maximale sur une fenêtre de 760 pixels : 0,041 d'atténuation au coin
+        // là où l'intégrale exacte en donne 0,189, soit quatre fois et demie
+        // trop sombre.
+        float ligne = uv.y * u_taille_source.y;
+        float gx = abs(dFdx(ligne));
+        float gy = abs(dFdy(ligne));
+
+        // Au-delà d'une ligne par pixel, le sinus cardinal devient négatif :
+        // l'intégrale est juste, mais afficher des lignes en contraste inversé
+        // serait un artefact de rendu, pas une caractéristique de tube. On
+        // laisse simplement le motif s'éteindre.
+        float attenuation = max(sinus_cardinal(gx) * sinus_cardinal(gy), 0.0);
+        float profil = 0.5 - 0.5 * cos(2.0 * PI * ligne) * attenuation;
+        rgb *= mix(1.0, profil, u_lignes);
     }
 
     if (u_masque > 0.0)
@@ -121,5 +247,5 @@ void main()
     }
 
     // Les deux effets assombrissent l'image ; on rend la lumière perdue.
-    sortie = vec4(clamp(rgb * u_luminosite, 0.0, 1.0), 1.0);
+    sortie = vec4(clamp(rgb * u_luminosite * couverture, 0.0, 1.0), 1.0);
 }
