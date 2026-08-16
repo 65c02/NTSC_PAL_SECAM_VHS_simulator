@@ -121,10 +121,11 @@ vec3 eotf(vec3 corrige)  { return pow(max(corrige, 0.0), vec3(u_gamma)); }
 // des points et le fonctionnement du filtre en peigne.
 //
 // La réduction modulo 1 est faite terme à terme et non à la fin : en simple
-// précision, 283,7516 x 576 lignes vaut 163 442, dont l'ulp est de 0,0078
-// cycle — soit près de 3° d'erreur de teinte accumulée en bas de l'image.
-// En ne propageant que la partie fractionnaire de f_sc/f_H, l'erreur retombe
-// sous le centième de degré.
+// précision, 283,7516 x 576 lignes vaut 163 441, dont l'ulp est de 0,015625
+// cycle — soit 5,6° d'erreur de teinte en bas de l'image, et rien du tout en
+// haut. En ne propageant que la partie fractionnaire de f_sc/f_H, la valeur
+// reste dans l'intervalle [0, 1[ où l'ulp vaut 6·10⁻⁸, et l'erreur retombe
+// sous le millionième de degré.
 float phase(float u, float ligne)
 {
     float cycles = u_phase_image

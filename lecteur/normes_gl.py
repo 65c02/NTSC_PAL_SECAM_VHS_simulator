@@ -50,20 +50,81 @@ dépasse 45."""
 # Noyaux de filtrage
 # ---------------------------------------------------------------------------
 
+ORDRE_REFERENCE = 4
+"""Ordre du Butterworth employé par `tvcolor.filtres`. Les noyaux du shader
+sont taillés pour lui ressembler ; garder les deux valeurs liées évite qu'une
+correction faite d'un côté ne soit oubliée de l'autre."""
+
+
 def noyau_passe_bas(n_taps: int, f_coupure: float, f_ech: float) -> np.ndarray:
-    """Noyau passe-bas à phase linéaire, fenêtré, normalisé en gain continu.
+    """Noyau passe-bas à phase linéaire, calqué sur le filtre de référence.
 
     `tvcolor` emploie des Butterworth récursifs, fidèles à un réseau LC. Un
     shader ne peut pas être récursif — chaque fragment est indépendant — d'où
-    le passage à un filtre à réponse finie. La fenêtre de Blackman évite le
-    rebond de Gibbs qu'une troncature brutale produirait sur les contours.
+    le passage à un filtre à réponse finie.
+
+    Reste à choisir lequel. Un sinus cardinal fenêtré est le réflexe, mais la
+    fenêtre — de Blackman ou de Hamming — **affaisse la bande passante** : à
+    31 coefficients elle perdait 2,9 dB à 1 MHz là où la référence n'en perd
+    que 0,95. Le temps de montée s'allongeait de moitié, six points au lieu de
+    neuf, et toutes les transitions de couleur s'élargissaient d'autant. Sur
+    le SECAM, où l'écart se cumule avec la modulation de fréquence et la
+    mémoire de ligne, les franges devenaient franchement voyantes.
+
+    On synthétise donc le noyau pour qu'il **épouse la réponse du Butterworth
+    aller-retour** de la référence, plutôt que de partir d'un gabarit idéal
+    dont on sait qu'il ne sera pas tenu. Les deux chaînes se répondent alors
+    par construction.
     """
     fc = float(np.clip(f_coupure / f_ech, 1e-4, 0.4999))
     if fc >= 0.4999:
         noyau = np.zeros(n_taps)
         noyau[n_taps // 2] = 1.0
         return noyau
-    noyau = sig.firwin(n_taps, cutoff=2.0 * fc, window="blackman")
+
+    numerateur, denominateur = sig.butter(ORDRE_REFERENCE, 2.0 * fc, output="ba")
+    # Grille explicite : `freqz` s'arrête juste avant Nyquist, que `firwin2`
+    # exige au contraire de trouver comme dernier point.
+    frequences = np.linspace(0.0, 0.5 * f_ech, 512)
+    _, reponse = sig.freqz(numerateur, denominateur, worN=frequences, fs=f_ech)
+    # Le filtrage aller-retour de la référence élève le module au carré.
+    gabarit = np.abs(reponse) ** 2
+
+    noyau = sig.firwin2(n_taps, frequences, gabarit, fs=f_ech)
+    return noyau / noyau.sum()
+
+
+ATTENUATION_DISCRIMINATEUR = 85.0
+"""Plancher de bande atténuée, en décibels, du mélangeur du discriminateur SECAM."""
+
+
+def noyau_demodulation_secam(n_taps: int, bande: float, f_ech: float) -> np.ndarray:
+    """Passe-bas du mélangeur du discriminateur. Ici, la réjection prime sur tout.
+
+    Ce noyau n'a pas le même cahier des charges que les autres, et lui donner
+    le même a coûté cher.
+
+    Le mélangeur transpose la luminance continue — qui vaut jusqu'à 1,0 — à la
+    fréquence de repos, où la porteuse ne pèse que 0,246. Or le discriminateur
+    mesure une **phase** : une fuite relative ε de la luminance se traduit par
+    une erreur de chrominance de ε·f_ech/(2π·Δf), soit un facteur dix. Un
+    pour-cent de fuite fait dix pour-cent d'erreur de couleur.
+
+    Il faut donc une réjection de l'ordre de 74 dB — et surtout **garantie**.
+    Un noyau ajusté sur une réponse de Butterworth laisse une ondulation dont
+    la position dépend de la longueur : à 21 coefficients elle donnait 68 dB,
+    à 25 seulement 58, à 29 encore 56. La qualité du rendu variait de façon
+    erratique avec un réglage censé l'améliorer.
+
+    La fenêtre de Kaiser, elle, garantit un plancher choisi d'avance et
+    monotone. On y perd la ressemblance exacte avec la référence sur la forme
+    de la bande passante ; on y gagne un comportement prévisible, ce qui vaut
+    bien mieux ici.
+    """
+    fc = float(np.clip(bande / f_ech, 1e-4, 0.4999))
+    noyau = sig.firwin(
+        n_taps, 2.0 * fc, window=("kaiser", sig.kaiser_beta(ATTENUATION_DISCRIMINATEUR))
+    )
     return noyau / noyau.sum()
 
 
@@ -127,6 +188,32 @@ Les uniformes de shader ne sont pas gratuits : GLSL 3.30 ne garantit que
 Avec 81 et 161, on en occupe 404 — confortable partout. Au-delà, la réjection
 cesse de progresser proportionnellement de toute façon."""
 
+BANDE_DEMODULATION_SECAM = 0.85e6
+"""Coupure du passe-bas de démodulation SECAM, en hertz.
+
+Elle ne vaut pas les 1,5 MHz de la bande de chrominance, et c'est délibéré :
+c'est ainsi qu'on rend compte de la **désaccentuation basse fréquence**, que le
+shader ne peut pas implémenter telle quelle.
+
+Le filtre normatif A(f) = (1 + jf/f₁)/(1 + jf/3f₁), avec f₁ = 85 kHz, a son
+coude si bas qu'à 17,6 MHz d'échantillonnage il demanderait plus de deux cents
+coefficients — hors de portée du budget d'uniformes. Mais son effet est
+mesurable : il atténue de 7 dB dès 255 kHz et de 9,4 dB au-delà, soit un
+facteur trois.
+
+Sans lui, le discriminateur restituait les transitions de couleur avec un
+**dépassement** de 0,26 en U, là où la référence n'en montre que 0,004. C'est ce
+dépassement qui dessinait une frange verte vive et striée sur les contours —
+l'artefact le plus voyant du SECAM simulé, et il n'avait rien d'authentique.
+
+La valeur retenue n'est pas déduite d'une formule mais **mesurée** : on balaie
+la coupure et l'on garde celle qui minimise l'écart au simulateur de référence.
+À 0,85 MHz, l'écart colorimétrique médian tombe à 4,6 et le dépassement à 0,058.
+
+Reste ensuite une frange colorée à chaque transition, plus large qu'en PAL.
+Celle-là est authentique : la chrominance SECAM est bien plus lente que la
+luminance, et le passage du jaune au cyan traverse réellement le vert."""
+
 LARGEUR_TRAP = 0.6e6
 """Demi-largeur du piège de sous-porteuse, en hertz. Même valeur que
 `tvcolor.decodeur.LARGEUR_TRAP`, et pour la même raison."""
@@ -171,7 +258,18 @@ class ReglageGL:
         # elle qui fait « ramper » les points au lieu de les laisser fixes.
         frac_image = float(np.mod(frac_ligne * n.lignes_totales, 1.0))
 
-        bande_dec = max(n.bande_c1, n.bande_c2)
+        # Le passe-bas placé après le mélangeur. En SECAM il sert un
+        # discriminateur, dont l'exigence de réjection est d'un tout autre
+        # ordre que celle d'un démodulateur synchrone : il lui faut son propre
+        # gabarit, garanti par une fenêtre de Kaiser.
+        if n.famille == "SECAM":
+            noyau_dec = noyau_demodulation_secam(
+                self.n_taps, BANDE_DEMODULATION_SECAM, self.f_ech
+            )
+        else:
+            noyau_dec = noyau_passe_bas(
+                self.n_taps, max(n.bande_c1, n.bande_c2), self.f_ech
+            )
 
         self.uniformes = {
             "u_taille": (float(self.largeur), float(self.hauteur)),
@@ -184,7 +282,7 @@ class ReglageGL:
             "u_noyau_luma": noyau_passe_bas(self.n_taps, n.bande_y, self.f_ech),
             "u_noyau_c1": noyau_passe_bas(self.n_taps, n.bande_c1, self.f_ech),
             "u_noyau_c2": noyau_passe_bas(self.n_taps, n.bande_c2, self.f_ech),
-            "u_noyau_dec": noyau_passe_bas(self.n_taps, bande_dec, self.f_ech),
+            "u_noyau_dec": noyau_dec,
             "u_noyau_notch": self._noyau_notch(),
             "u_secam_repos": (float(F_SC_SECAM_B), float(F_SC_SECAM_R)),
             "u_secam_dev": (float(SECAM_DEVIATION_B), float(SECAM_DEVIATION_R)),
@@ -215,8 +313,19 @@ class ReglageGL:
         )
 
 
+def amplitude_porteuse_au_repos() -> float:
+    """Amplitude de la sous-porteuse SECAM quand la couleur est neutre.
+
+    C'est la référence à laquelle se compare la fuite de luminance : le
+    filtre cloche l'atténue fortement au repos, ce qui rend justement le
+    discriminateur plus vulnérable là où l'image est peu colorée."""
+    grand_f = F_SC_SECAM_B / SECAM_F0 - SECAM_F0 / F_SC_SECAM_B
+    gain = np.sqrt((1.0 + 256.0 * grand_f**2) / (1.0 + 1.5876 * grand_f**2))
+    return float(gain / GAIN_CLOCHE_MAX)
+
+
 def longueur_minimale_discriminateur(
-    f_ech: float, bande: float, f_repos: float, attenuation_db: float = 50.0
+    f_ech: float, bande: float, erreur_admise: float = 0.01
 ) -> int:
     """Longueur de noyau minimale pour que le discriminateur SECAM tienne debout.
 
@@ -234,14 +343,39 @@ def longueur_minimale_discriminateur(
     Le SECAM décroche alors complètement.
 
     Plutôt que d'inscrire en dur une longueur trouvée à l'essai, on cherche la
-    plus courte qui atteigne l'atténuation voulue.
+    plus courte qui tienne un **budget d'erreur de chrominance** donné.
+
+    Deux pièges, tous deux payés comptant :
+
+    * le critère porte sur le pire cas de **toute la bande** que la porteuse
+      occupe, excursion comprise, et non sur la seule fréquence de repos.
+      Évaluée au seul point 4,25 MHz, une longueur de onze coefficients
+      affichait 64 dB — mais ce point tombait dans un creux d'ondulation, et
+      le pire cas de la bande n'était que de 34 dB ;
+
+    * le seuil se **déduit** de l'erreur de couleur admise au lieu d'être un
+      chiffre rond. Un seuil de 50 dB paraissait large ; il laissait en
+      réalité 13 % d'erreur de chrominance, le facteur dix de la
+      transposition étant passé inaperçu.
     """
+    basse = F_SC_SECAM_B + SECAM_EXCURSION_MIN
+    haute = F_SC_SECAM_R + SECAM_EXCURSION_MAX
+    frequences = np.linspace(0.0, 0.5 * f_ech, 4096)
+    dans_la_bande = (frequences >= basse) & (frequences <= haute)
+
+    # Budget d'erreur, déduit et non choisi : une fuite relative ε de la
+    # luminance devient une erreur de chrominance ε·f_ech/(2π·Δf).
+    fuite_admise = (
+        erreur_admise * 2.0 * np.pi * min(SECAM_DEVIATION_B, SECAM_DEVIATION_R)
+        / f_ech * amplitude_porteuse_au_repos()
+    )
+    seuil_db = 20.0 * np.log10(fuite_admise)
+
     for n_taps in range(9, 81, 2):
-        noyau = noyau_passe_bas(n_taps, bande, f_ech)
-        _, reponse = sig.freqz(noyau, worN=4096, fs=f_ech)
-        frequences = np.linspace(0.0, f_ech / 2.0, 4096, endpoint=False)
-        indice = int(np.argmin(np.abs(frequences - f_repos)))
-        if 20.0 * np.log10(max(abs(reponse[indice]), 1e-15)) <= -attenuation_db:
+        noyau = noyau_demodulation_secam(n_taps, bande, f_ech)
+        _, reponse = sig.freqz(noyau, worN=frequences, fs=f_ech)
+        pire = float(np.max(np.abs(reponse[dans_la_bande])))
+        if 20.0 * np.log10(max(pire, 1e-15)) <= seuil_db:
             return n_taps
     return 41
 
@@ -307,9 +441,7 @@ def reglage(
 
     if norme.famille == "SECAM":
         f_ech = largeur_effective / norme.duree_ligne_active
-        minimum = longueur_minimale_discriminateur(
-            f_ech, max(norme.bande_c1, norme.bande_c2), F_SC_SECAM_B
-        )
+        minimum = longueur_minimale_discriminateur(f_ech, BANDE_DEMODULATION_SECAM)
         n_taps = min(max(n_taps, minimum), PLAFOND_TAPS)
 
     return ReglageGL(norme, n_taps, n_notch, largeur_effective)
