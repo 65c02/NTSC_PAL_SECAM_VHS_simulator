@@ -37,11 +37,11 @@ if not errorlevel 1 set "PY=py -3"
 if not defined PY goto :pas_de_python
 
 rem ---------------------------------------------------------- dependances ---
-%PY% -c "import numpy, scipy, PyQt5, cv2, OpenGL" >nul 2>&1
+%PY% -c "import numpy, scipy, PyQt5, OpenGL, av, sounddevice" >nul 2>&1
 if not errorlevel 1 goto :dependances_ok
 echo.
 echo   Il manque des dependances pour le lecteur video.
-echo   Le lecteur a besoin de numpy, scipy, PyQt5, opencv-python et PyOpenGL.
+echo   Il lui faut numpy, scipy, PyQt5, PyOpenGL, av (PyAV) et sounddevice.
 echo.
 echo   Installez-les avec :   run.bat install
 echo.

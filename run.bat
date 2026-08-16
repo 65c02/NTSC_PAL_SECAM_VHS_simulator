@@ -82,10 +82,11 @@ rem =========================================================================
 :video
 call :verifier_dependances
 if errorlevel 1 goto :fin
-%PY% -c "import OpenGL" >nul 2>&1
+%PY% -c "import OpenGL, av, sounddevice" >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo   PyOpenGL est absent, et le lecteur video en a besoin.
+    echo   Il manque une dependance du lecteur video.
+    echo   Il lui faut PyOpenGL, av (PyAV) et sounddevice.
     echo   Lancez :  run.bat install
     echo.
     set "ERREUR=1"
