@@ -46,7 +46,7 @@ void main()
     float signal = u_piedestal + (1.0 - u_piedestal) * (y + chroma);
 
     if (u_bruit > 0.0)
-        signal += u_bruit * bruit_gaussien(v_uv * u_taille);
+        signal += u_bruit * bruit_video(v_uv * u_taille);
 
     sortie = vec4(signal, 0.0, 0.0, 1.0);
 }

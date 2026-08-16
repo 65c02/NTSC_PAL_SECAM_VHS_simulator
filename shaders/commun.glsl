@@ -136,11 +136,31 @@ float phase(float u, float ligne)
 
 // ------------------------------------------------------------------- bruit
 
-// Générateur pseudo-aléatoire sans texture ni état. La constante magique est
-// le classique « hash sinus » : suffisant pour du bruit visuel, et gratuit.
-float alea(vec2 p)
+// Générateur pseudo-aléatoire sans texture ni état.
+//
+// Le réflexe est le « hash sinus », fract(sin(dot(p, k)) * grand_nombre). Il a
+// deux défauts qui se voient ici. Sa qualité dépend de la précision de sin(),
+// donc le grain change d'une carte graphique à l'autre ; et il laisse des
+// corrélations régulières le long des lignes, qui donnent au bruit un aspect
+// trop lisse, trop « tapis ». Un mélangeur entier coûte la même chose et n'a
+// ni l'un ni l'autre.
+uint melanger(uint h)
 {
-    return fract(sin(dot(p + u_graine, vec2(12.9898, 78.233))) * 43758.5453);
+    h ^= h >> 16; h *= 0x7FEB352Du;
+    h ^= h >> 15; h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return h;
+}
+
+float alea(vec2 p, uint sel)
+{
+    // Décalage avant la conversion : les noyaux lisent à gauche du bord, donc
+    // p peut être négatif, et le tour du compteur non signé casserait la
+    // continuité du champ juste à cet endroit.
+    uvec2 e = uvec2(ivec2(floor(p)) + 8192);
+    return float(melanger(e.x * 0x9E3779B9u ^ melanger(e.y * 0x85EBCA6Bu)
+                          ^ floatBitsToUint(u_graine) ^ sel))
+           * (1.0 / 4294967296.0);
 }
 
 // Deux tirages uniformes -> un tirage gaussien, par la transformation de
@@ -148,9 +168,46 @@ float alea(vec2 p)
 // uniforme n'aurait ni les mêmes queues de distribution ni le même aspect.
 float bruit_gaussien(vec2 p)
 {
-    float a = max(alea(p), 1e-6);
-    float b = alea(p + vec2(17.0, 43.0));
+    float a = max(alea(p, 0x1u), 1e-6);
+    float b = alea(p, 0x2u);
     return sqrt(-2.0 * log(a)) * cos(DEUX_PI * b);
+}
+
+// Bruit du canal, limité à la bande de luminance.
+//
+// C'est ce que fait `canal._bruit` : un tirage gaussien blanc, un passe-bas à
+// `bande_y`, puis une renormalisation pour retrouver le sigma demandé. Le
+// shader ajoutait pour sa part du bruit blanc, ce qui était un écart à la
+// référence, et un écart visible.
+//
+// Le filtrage n'est pas cosmétique. Le bruit thermique arrive plat, mais rien
+// de ce qui dépasse la bande de luminance ne parvient à l'écran : l'étage FI
+// puis l'amplificateur vidéo le coupent, exactement comme ils coupent le
+// signal. Employer ici le noyau de luminance n'est donc pas une approximation
+// du passe-bas de la référence, c'est le même filtre — `noyau_passe_bas` est
+// justement taillé pour épouser sa réponse.
+//
+// La conséquence est ce que l'oeil lit en premier. Les échantillons d'une même
+// ligne restent corrélés sur plusieurs positions, alors que deux lignes sont
+// indépendantes : le grain est plus large que haut, et il s'agglomère. C'est
+// toute la différence entre de la neige de télévision et du poivre et sel.
+float bruit_video(vec2 p)
+{
+    int demi = N_TAPS / 2;
+    float somme = 0.0;
+    float energie = 0.0;
+
+    for (int k = 0; k < N_TAPS; ++k)
+    {
+        float w = u_noyau_luma[k];
+        somme += w * bruit_gaussien(p + vec2(float(k - demi), 0.0));
+        // Des tirages indépendants ajoutent leurs variances, pas leurs
+        // écarts-types. La référence mesure la valeur efficace obtenue et
+        // divise par elle ; ici l'énergie du noyau donne la même chose sans
+        // avoir à parcourir l'image.
+        energie += w * w;
+    }
+    return somme * inversesqrt(max(energie, 1e-12));
 }
 
 // ---------------------------------------------------------------- accès

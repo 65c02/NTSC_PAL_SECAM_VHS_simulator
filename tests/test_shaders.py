@@ -148,6 +148,52 @@ def test_une_image_grise_reste_grise(vue, norme):
 
 
 # ---------------------------------------------------------------------------
+# Le bruit du canal
+# ---------------------------------------------------------------------------
+
+def _correlation(residu, dl, dc):
+    """Corrélation d'un résidu avec lui-même, décalé de (dl, dc) échantillons."""
+    a = residu[: residu.shape[0] - dl, : residu.shape[1] - dc]
+    b = residu[dl:, dc:]
+    return float((a * b).mean() / max(residu.var(), 1e-12))
+
+
+@pytest.mark.parametrize(
+    "norme,correlation_min",
+    [("NTSC-M", 0.45), ("PAL-BG", 0.45), ("SECAM-L", 0.60)],
+)
+def test_le_bruit_est_limite_a_la_bande_de_luminance(vue, norme, correlation_min):
+    """Le bruit doit arriver limité en bande, comme dans `canal._bruit`.
+
+    La référence tire un bruit blanc, le passe à `bande_y`, puis renormalise
+    pour retrouver le sigma demandé. Le shader ajoutait pour sa part du bruit
+    blanc — un écart à la référence, et un écart visible : le grain était fin
+    et isotrope là où la neige d'un téléviseur s'allonge et s'agglomère.
+
+    Ce qui rend ce test nécessaire, c'est que l'écart NE SE VOIT PAS sur un
+    écart-type. Les deux versions renormalisent, et donnent le même : 0,121
+    en NTSC dans les deux cas. Il faut regarder la corrélation d'un
+    échantillon avec son voisin de la même ligne, qui passe de +0,09 à +0,61.
+
+    On ne vérifie que l'axe horizontal. La corrélation verticale existe aussi,
+    mais elle ne dit rien du bruit : elle vient du décodeur, et vaut ce que
+    vaut sa mémoire de ligne — 0,50 pour le peigne 1H du NTSC, 0,03 pour celui
+    du PAL qui remonte deux lignes, 0,22 pour le retard du SECAM.
+    """
+    hauteur, largeur = 288, 384
+    gris = np.full((hauteur, largeur, 3), 0.5)
+
+    propre = rendre(vue, gris, norme=norme)
+    bruite = rendre(vue, gris, norme=norme, rapport_signal_bruit=20.0)
+
+    residu = (bruite - propre).mean(axis=2)[20:-20, 30:-30]
+    residu = residu - residu.mean()
+
+    assert residu.std() > 0.02, "le bruit demandé n'est pas arrivé"
+    assert _correlation(residu, 0, 1) > correlation_min
+
+
+# ---------------------------------------------------------------------------
 # La physique des trois normes
 # ---------------------------------------------------------------------------
 
