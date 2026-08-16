@@ -222,8 +222,49 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             groupe.ajouter(curseur)
         colonne.addWidget(groupe)
 
+        # --- restitution ---
+        groupe = Groupe("Le tube")
+
+        self.case_tube = QtWidgets.QCheckBox("Simuler la définition du tube")
+        self.case_tube.setChecked(True)
+        self.case_tube.toggled.connect(self._appliquer)
+        groupe.ajouter(self.case_tube)
+
+        self.curseur_definition = Curseur(
+            "Définition horizontale", 150.0, 900.0, 380.0, 10.0, "lignes", 0
+        )
+        self.curseur_definition.valeur_changee.connect(self._appliquer)
+        groupe.ajouter(self.curseur_definition)
+        groupe.ajouter(note(
+            "Le spot du faisceau et l'amplificateur vidéo n'ont jamais restitué "
+            "4,4 MHz à pleine amplitude. Un téléviseur d'appartement affichait "
+            "300 à 400 lignes : il rendait la sous-porteuse à moins du quart. "
+            "Décochez pour obtenir un écran parfait — qui montre le résidu bien "
+            "plus nettement qu'aucun tube ne l'a jamais fait."
+        ))
+
+        self.combo_echantillonnage = QtWidgets.QComboBox()
+        for libelle, code in (
+            ("normatif — 4 points par cycle", "normatif"),
+            ("double — 8 points par cycle", "double"),
+            ("triple — 12 points par cycle", "triple"),
+            ("résolution de l'écran", "ecran"),
+        ):
+            self.combo_echantillonnage.addItem(libelle, code)
+        self.combo_echantillonnage.setCurrentIndex(0)
+        self.combo_echantillonnage.currentIndexChanged.connect(self._appliquer)
+        groupe.ajouter(QtWidgets.QLabel("Grille de calcul du signal"))
+        groupe.ajouter(self.combo_echantillonnage)
+        groupe.ajouter(note(
+            "Quatre points par cycle suffisent à représenter la sous-porteuse, "
+            "mais le résidu prend alors la forme d'un escalier. Au-delà, il "
+            "redevient la sinusoïde qu'il est. Le nombre de lignes, lui, reste "
+            "normatif — 576 lignes, ce sont de vraies lignes."
+        ))
+        colonne.addWidget(groupe)
+
         # --- tube ---
-        groupe = Groupe("Restitution")
+        groupe = Groupe("Aspect")
         self.curseur_lignes = Curseur("Lignes de balayage", 0.0, 1.0, 0.0, 0.05, "", 2)
         self.curseur_masque = Curseur("Masque du tube", 0.0, 1.0, 0.0, 0.05, "", 2)
         self.curseur_luminosite = Curseur("Luminosité", 0.5, 2.5, 1.0, 0.05, "×", 2)
@@ -267,6 +308,10 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             lignes_balayage=self.curseur_lignes.valeur(),
             masque_tube=self.curseur_masque.valeur(),
             luminosite=self.curseur_luminosite.valeur(),
+            definition_tube=(
+                self.curseur_definition.valeur() if self.case_tube.isChecked() else 0.0
+            ),
+            echantillonnage=self.combo_echantillonnage.currentData(),
             animer=self.case_animer.isChecked(),
             conserver_proportions=self.case_proportions.isChecked(),
         )

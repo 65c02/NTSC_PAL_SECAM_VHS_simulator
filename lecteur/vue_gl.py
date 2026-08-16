@@ -27,8 +27,10 @@ import numpy as np
 from OpenGL import GL
 from PyQt5 import QtCore, QtGui, QtWidgets
 
+from tvcolor.constantes import obtenir_norme
+
 from .gl_util import Cible, Programme, Quad, TextureImage, assembler, lire_source
-from .normes_gl import ReglageGL, reglage
+from .normes_gl import ReglageGL, reglage, sigma_du_tube
 
 FICHIER_NORME = {"NTSC": "ntsc.glsl", "PAL": "pal.glsl", "SECAM": "secam.glsl"}
 
@@ -55,8 +57,32 @@ class ParametresRendu:
     masque_tube: float = 0.0
     luminosite: float = 1.0
 
+    definition_tube: float = 0.0
+    """Définition horizontale du tube, en lignes. 0 désactive la simulation du
+    spot — c'est alors un écran parfait, qui restitue la sous-porteuse
+    intégralement, ce qu'aucun téléviseur n'a jamais fait."""
+
+    echantillonnage: str = "normatif"
+    """Finesse de la grille de calcul : `normatif` (quatre points par cycle de
+    sous-porteuse), `double`, `triple`, ou `ecran` pour caler la grille sur la
+    largeur réellement affichée."""
+
     animer: bool = True
     conserver_proportions: bool = True
+
+    def largeur_grille(self, norme, largeur_affichee: int) -> int:
+        """Largeur de la grille d'échantillonnage, en points par ligne active."""
+        base = norme.echantillons_par_ligne
+        if self.echantillonnage == "double":
+            return 2 * base
+        if self.echantillonnage == "triple":
+            return 3 * base
+        if self.echantillonnage == "ecran":
+            # On arrondit à un multiple de quatre : cela évite de reconstruire
+            # tous les programmes pour un pixel de différence pendant qu'on
+            # redimensionne la fenêtre.
+            return max(base, 4 * int(round(largeur_affichee / 4.0)))
+        return base
 
     def sigma_bruit(self) -> float:
         if self.rapport_signal_bruit is None:
@@ -79,6 +105,7 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._pret = False
         self._recompiler = True
 
+        self._cle_reglage: tuple | None = None
         self._capture_demandee = False
         self._capture: np.ndarray | None = None
 
@@ -143,7 +170,7 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._cibles.clear()
 
         if self._reglage is None:
-            self._reglage = reglage(self.parametres.norme, self.parametres.qualite)
+            self._reevaluer_reglage()
         fichier = FICHIER_NORME[self._reglage.famille]
         defines = {
             "N_TAPS": self._reglage.n_taps,
@@ -199,19 +226,35 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self.update()
 
     def appliquer(self, parametres: ParametresRendu) -> None:
-        besoin = (
-            parametres.norme != self.parametres.norme
-            or parametres.qualite != self.parametres.qualite
-        )
         self.parametres = parametres
-        if besoin:
-            # Le jeu de constantes est calculé tout de suite — il ne coûte que
-            # quelques millisecondes de conception de filtres, et l'interface
-            # doit pouvoir décrire la norme courante sans attendre le prochain
-            # rendu. Seul le travail OpenGL est reporté dans `paintGL`.
-            self._reglage = reglage(parametres.norme, parametres.qualite)
-            self._recompiler = True
+        self._reevaluer_reglage()
         self.update()
+
+    def _largeur_affichee(self) -> int:
+        """Largeur, en pixels physiques, qu'occupe réellement l'image à l'écran."""
+        ratio = self.devicePixelRatioF()
+        largeur = max(1, int(self.width() * ratio))
+        hauteur = max(1, int(self.height() * ratio))
+        echelle, _ = self._cadrage(largeur, hauteur)
+        return max(64, int(round(echelle[0] * largeur)))
+
+    def _reevaluer_reglage(self) -> bool:
+        """Recalcule le jeu de constantes si la norme, la qualité ou la grille change.
+
+        Le calcul coûte quelques millisecondes de conception de filtres, mais
+        il est fait tout de suite plutôt que reporté : l'interface doit pouvoir
+        décrire la norme courante sans attendre le prochain rendu. Seul le
+        travail OpenGL — compilation et allocation — est repoussé dans `paintGL`.
+        """
+        norme = obtenir_norme(self.parametres.norme)
+        largeur = self.parametres.largeur_grille(norme, self._largeur_affichee())
+        cle = (self.parametres.norme, self.parametres.qualite, largeur)
+        if cle == self._cle_reglage:
+            return False
+        self._cle_reglage = cle
+        self._reglage = reglage(self.parametres.norme, self.parametres.qualite, largeur)
+        self._recompiler = True
+        return True
 
     def description(self) -> str:
         return self._reglage.description() if self._reglage else ""
@@ -252,8 +295,12 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
     # ------------------------------------------------------------------
 
     def paintGL(self) -> None:
-        if not self._pret or self._reglage is None:
+        if not self._pret:
             return
+        # En mode « résolution de l'écran », la grille suit la taille de la
+        # fenêtre : on vérifie à chaque image si elle a changé.
+        if self.parametres.echantillonnage == "ecran" or self._reglage is None:
+            self._reevaluer_reglage()
         if self._recompiler:
             self._construire()
 
@@ -410,10 +457,21 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         programme.definir("u_lignes", float(p.lignes_balayage))
         programme.definir("u_masque", float(p.masque_tube))
         programme.definir("u_luminosite", float(p.luminosite))
+        programme.definir(
+            "u_sigma_tube",
+            sigma_du_tube(p.definition_tube, self._reglage.largeur),
+        )
 
         GL.glActiveTexture(GL.GL_TEXTURE0)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._cibles["resultat"].texture)
-        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+        # Les mipmaps servent au cas inverse du précédent : quand l'image est
+        # affichée PLUS PETITE que la grille de calcul, un simple filtrage
+        # bilinéaire replierait le grain fin de la sous-porteuse en un moirage
+        # grossier, bien plus visible que le grain lui-même.
+        GL.glGenerateMipmap(GL.GL_TEXTURE_2D)
+        GL.glTexParameteri(
+            GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR_MIPMAP_LINEAR
+        )
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
         self._quad.dessiner()
 

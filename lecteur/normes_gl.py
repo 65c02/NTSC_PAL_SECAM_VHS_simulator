@@ -118,6 +118,15 @@ def _gain_cloche_maximal() -> float:
 
 GAIN_CLOCHE_MAX = _gain_cloche_maximal()
 
+PLAFOND_TAPS = 81
+PLAFOND_NOTCH = 161
+"""Longueurs maximales des noyaux.
+
+Les uniformes de shader ne sont pas gratuits : GLSL 3.30 ne garantit que
+1024 composantes flottantes par étage fragment, et l'on déclare cinq tableaux.
+Avec 81 et 161, on en occupe 404 — confortable partout. Au-delà, la réjection
+cesse de progresser proportionnellement de toute façon."""
+
 LARGEUR_TRAP = 0.6e6
 """Demi-largeur du piège de sous-porteuse, en hertz. Même valeur que
 `tvcolor.decodeur.LARGEUR_TRAP`, et pour la même raison."""
@@ -132,6 +141,18 @@ class ReglageGL:
     norme: Norme
     n_taps: int
     n_notch: int
+    largeur_forcee: int | None = None
+    """Largeur de la grille d'échantillonnage, en points par ligne active.
+
+    `None` donne la valeur normative, quatre points par cycle de sous-porteuse
+    — le strict nécessaire pour la représenter. La forcer plus haut ne change
+    rien à la physique : la phase se calcule en cycles par largeur d'image, et
+    les bandes passantes sont en hertz. Seule la finesse de représentation de
+    la sous-porteuse change, et avec elle l'aspect du résidu, qui passe d'un
+    escalier de quatre points à une sinusoïde lisse.
+
+    Le nombre de LIGNES, lui, ne se règle pas : 480 ou 576 lignes actives, c'est
+    la norme, et les lignes sont bien réelles."""
 
     largeur: int = field(init=False)
     hauteur: int = field(init=False)
@@ -140,7 +161,7 @@ class ReglageGL:
 
     def __post_init__(self) -> None:
         n = self.norme
-        self.largeur = n.echantillons_par_ligne
+        self.largeur = int(self.largeur_forcee or n.echantillons_par_ligne)
         self.hauteur = n.lignes_actives
         self.f_ech = self.largeur / n.duree_ligne_active
 
@@ -225,18 +246,70 @@ def longueur_minimale_discriminateur(
     return 41
 
 
-def reglage(code: str, qualite: str = "normale") -> ReglageGL:
+def _impair(valeur: float, plafond: int) -> int:
+    """Arrondit à l'entier impair le plus proche, borné. Un noyau symétrique
+    veut un nombre impair de coefficients, pour avoir un centre."""
+    n = int(round(valeur))
+    n = max(5, min(n, plafond))
+    return n if n % 2 else n + 1
+
+
+def sigma_du_tube(lignes_de_definition: float, largeur_grille: int) -> float:
+    """Écart-type du spot d'un tube, en points de la grille d'échantillonnage.
+
+    Un tube cathodique ne restitue pas les hautes fréquences à pleine
+    amplitude : le spot du faisceau a une largeur finie, et l'amplificateur
+    vidéo sa propre bande passante. Leur effet combiné se modélise très bien
+    par une gaussienne, dont la transformée est elle-même gaussienne :
+
+        MTF(f) = exp(−2π² σ² f²)
+
+    On paramètre par la grandeur que les constructeurs affichaient : les
+    **lignes de résolution horizontale**. Par convention, N lignes signifient
+    N/2 alternances sur une largeur égale à la HAUTEUR de l'image ; en 4:3
+    cela fait (N/2)·(4/3) alternances par largeur d'image. On cale la
+    gaussienne pour que la modulation y tombe à 10 %, seuil usuel de lisibilité.
+
+    C'est la pièce manquante qui explique l'observation de départ : un
+    téléviseur d'appartement affichait 300 à 400 lignes, et restituait donc la
+    sous-porteuse — à 229 alternances par largeur — à moins d'un quart de son
+    amplitude. Un moniteur, lui, la rend intégralement.
+    """
+    if lignes_de_definition <= 0:
+        return 0.0
+    f_limite = 0.5 * lignes_de_definition * (4.0 / 3.0)
+    sigma_largeurs = 0.34157 / f_limite       # sqrt(ln 10 / (2π²)) / f_limite
+    return sigma_largeurs * largeur_grille
+
+
+def reglage(
+    code: str, qualite: str = "normale", largeur: int | None = None
+) -> ReglageGL:
     """Construit le jeu d'uniformes d'une norme, pour une qualité donnée."""
     if qualite not in QUALITES:
         raise KeyError(f"qualité inconnue : {qualite!r}")
     n_taps, n_notch = QUALITES[qualite]
     norme = obtenir_norme(code)
+    largeur_effective = int(largeur or norme.echantillons_par_ligne)
+
+    # Les longueurs de noyau suivent la finesse de la grille, et ce n'est pas
+    # un raffinement : c'est indispensable.
+    #
+    # Un filtre à réponse finie se conçoit en fréquence NORMALISÉE. Doubler la
+    # fréquence d'échantillonnage sans toucher au noyau divise par deux la
+    # largeur relative de la bande à rejeter, et le même nombre de
+    # coefficients ne sait plus la former. Mesuré sur le résidu SECAM d'une
+    # image blanche : à grille double et noyaux inchangés, il passait de 2,1 à
+    # 17,6 niveaux sur 255 — huit fois pire, alors qu'on croyait raffiner.
+    facteur = largeur_effective / norme.echantillons_par_ligne
+    n_taps = _impair(n_taps * facteur, PLAFOND_TAPS)
+    n_notch = _impair(n_notch * facteur, PLAFOND_NOTCH)
 
     if norme.famille == "SECAM":
-        f_ech = norme.echantillons_par_ligne / norme.duree_ligne_active
+        f_ech = largeur_effective / norme.duree_ligne_active
         minimum = longueur_minimale_discriminateur(
             f_ech, max(norme.bande_c1, norme.bande_c2), F_SC_SECAM_B
         )
-        n_taps = max(n_taps, minimum)
+        n_taps = min(max(n_taps, minimum), PLAFOND_TAPS)
 
-    return ReglageGL(norme, n_taps, n_notch)
+    return ReglageGL(norme, n_taps, n_notch, largeur_effective)

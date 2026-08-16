@@ -27,9 +27,44 @@ uniform vec2  u_decalage;
 uniform float u_lignes;          // intensité des lignes de balayage, 0 à 1
 uniform float u_masque;          // intensité du masque de tube, 0 à 1
 uniform float u_luminosite;
+uniform float u_sigma_tube;      // spot du faisceau, en points de la grille
 
 in  vec2 v_uv;
 out vec4 sortie;
+
+const int TAPS_TUBE = 9;
+
+// Réponse du tube : le spot du faisceau et la bande passante de
+// l'amplificateur vidéo, ramassés en une gaussienne.
+//
+// C'est la pièce qui manquait le plus à cette simulation. Un téléviseur
+// d'appartement affichait 300 à 400 lignes de définition horizontale ; il
+// restituait donc la sous-porteuse — qui tombe à 229 alternances par largeur
+// d'image — à moins du quart de son amplitude. Un écran plat, lui, la rend
+// intégralement, et le résidu que le piège a laissé passer devient bien plus
+// voyant qu'il ne l'a jamais été sur un tube.
+//
+// Les échantillons sont pris à des positions proportionnelles à sigma, et non
+// à des points entiers : le noyau couvre alors toujours ±3 sigma, que le spot
+// mesure un demi-point ou dix, pour un coût constant.
+vec3 reponse_du_tube(vec2 uv)
+{
+    if (u_sigma_tube < 0.01)
+        return texture(u_image, uv).rgb;
+
+    float pas = 3.0 * u_sigma_tube / float(TAPS_TUBE);
+    vec3  somme = vec3(0.0);
+    float total = 0.0;
+
+    for (int k = -TAPS_TUBE; k <= TAPS_TUBE; ++k)
+    {
+        float d = float(k) * pas;
+        float poids = exp(-0.5 * (d * d) / (u_sigma_tube * u_sigma_tube));
+        somme += poids * texture(u_image, uv + vec2(d / u_taille_source.x, 0.0)).rgb;
+        total += poids;
+    }
+    return somme / total;
+}
 
 void main()
 {
@@ -51,7 +86,7 @@ void main()
     // rétablit donc le sens qu'ici, au tout dernier moment.
     uv.y = 1.0 - uv.y;
 
-    vec3 rgb = texture(u_image, uv).rgb;
+    vec3 rgb = reponse_du_tube(uv);
 
     if (u_lignes > 0.0)
     {

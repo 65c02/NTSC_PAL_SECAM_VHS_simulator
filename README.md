@@ -87,7 +87,13 @@ des appels OpenGL avec l'horloge du processeur donne des cadences fantaisistes,
 puisque les commandes sont empilées et rendent la main aussitôt.
 
 Trois niveaux de qualité règlent la longueur des noyaux de filtrage, entre 13
-et 31 coefficients — et jusqu'à 61 pour le piège de sous-porteuse.
+et 31 coefficients — et jusqu'à 61 pour le piège de sous-porteuse. La **grille
+de calcul** est réglable à part : normative (quatre points par cycle de
+sous-porteuse), double, triple, ou calée sur la largeur réellement affichée.
+Les longueurs de noyau suivent automatiquement, faute de quoi affiner la grille
+*dégraderait* le résultat — un filtre se conçoit en fréquence normalisée, et
+doubler l'échantillonnage sans rallonger le noyau divise par deux la largeur
+relative de la bande à rejeter.
 
 ### L'enchaînement des passes
 
@@ -115,6 +121,33 @@ L'écart avec le simulateur de référence est **mesuré**, pas supposé
 (`tests/test_shaders.py`) : ΔE\*ab médian de **0,70** en NTSC et **0,88** en PAL
 — sous le seuil de perception — et **3,44** en SECAM, où le piège de
 sous-porteuse à réponse finie n'égale pas le récursif de la référence.
+
+### La définition du tube
+
+Un écran plat restitue 4,4 MHz intégralement. **Aucun tube ne l'a jamais fait.**
+
+Le spot du faisceau a une largeur finie et l'amplificateur vidéo sa propre
+bande passante ; leur effet combiné se modélise par une gaussienne, réglée en
+*lignes de résolution horizontale* — la grandeur que les constructeurs
+affichaient. Un téléviseur d'appartement en donnait 300 à 400, et rendait donc
+la sous-porteuse — qui tombe à 229 alternances par largeur d'image — à moins du
+quart de son amplitude.
+
+À quoi s'ajoute la géométrie de vision, qui n'est pas un détail :
+
+| | Période du motif | Angle sous-tendu |
+|---|---|---|
+| Tube 4:3 de 60 cm, vu à 2,5 m | 2,62 mm | **3,6′ d'arc** |
+| Moniteur de 50 cm, vu à 60 cm | ~11 mm | **12,5′ d'arc** |
+
+L'œil résout environ une minute d'arc. Sur le téléviseur, le résidu frôlait le
+seuil de visibilité ; sur un moniteur, il est trois fois et demie plus gros et
+saute aux yeux. Mesuré sur une image blanche en SECAM, la simulation du tube le
+ramène de 2,1 à 0,6 niveau sur 255.
+
+Le réglage agit dans la passe de présentation, jamais dans la chaîne de
+signal : c'est une caractéristique d'**affichage**, et la comparaison avec le
+simulateur de référence reste ainsi exacte.
 
 ### Deux réglages qui ne se devinent pas
 
