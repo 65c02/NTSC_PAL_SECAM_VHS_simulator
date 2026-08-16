@@ -5,6 +5,23 @@ from __future__ import annotations
 from PyQt5 import QtCore, QtWidgets
 
 
+class Glissiere(QtWidgets.QSlider):
+    """Glissière sourde à la molette.
+
+    Les curseurs vivent dans un panneau qui défile, et le comportement par
+    défaut de Qt y est franchement traître : la molette agit sur la glissière
+    survolée au lieu de faire défiler le panneau. On croit parcourir les
+    réglages, on est en train de les changer — et sur une barre de position de
+    vidéo, un cran de molette saute dans le film.
+
+    En ignorant l'événement, on le laisse remonter au parent, qui lui sait
+    défiler. Le réglage reste accessible au clic et aux flèches du clavier.
+    """
+
+    def wheelEvent(self, evenement):  # noqa: N802 - API Qt
+        evenement.ignore()
+
+
 class Curseur(QtWidgets.QWidget):
     """Curseur à valeur réelle, avec libellé, unité et valeur lisible.
 
@@ -37,7 +54,7 @@ class Curseur(QtWidgets.QWidget):
         police.setFamily("Consolas")
         self._valeur.setFont(police)
 
-        self._curseur = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._curseur = Glissiere(QtCore.Qt.Horizontal)
         self._curseur.setMinimum(0)
         self._curseur.setMaximum(int(round((maxi - mini) / pas)))
         self._curseur.valueChanged.connect(self._sur_changement)

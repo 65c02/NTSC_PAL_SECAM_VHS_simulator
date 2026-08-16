@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-from gui.widgets_base import Curseur, Groupe, note
+from gui.widgets_base import Curseur, Glissiere, Groupe, note
 from tvcolor import mires
 from tvcolor.constantes import NORMES
 
@@ -50,7 +50,8 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.source.erreur.connect(self._sur_erreur)
 
         self._silencieux = False
-        self._position = 0
+        self._position = 0.0
+        self._tailles_separation: list[int] = []
 
         self._construire()
         self._charger_mire()
@@ -63,20 +64,23 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.vue = VueTelevision()
         self.vue.fps_mesure.connect(self._sur_fps)
 
+        self._barre_transport = self._construire_transport()
+        self._panneau = self._construire_panneau()
+
         conteneur = QtWidgets.QWidget()
         colonne = QtWidgets.QVBoxLayout(conteneur)
         colonne.setContentsMargins(0, 0, 0, 0)
         colonne.setSpacing(4)
         colonne.addWidget(self.vue, 1)
-        colonne.addWidget(self._construire_transport())
+        colonne.addWidget(self._barre_transport)
 
-        separation = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        separation.addWidget(conteneur)
-        separation.addWidget(self._construire_panneau())
-        separation.setStretchFactor(0, 1)
-        separation.setStretchFactor(1, 0)
-        separation.setSizes([1150, 350])
-        self.setCentralWidget(separation)
+        self._separation = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self._separation.addWidget(conteneur)
+        self._separation.addWidget(self._panneau)
+        self._separation.setStretchFactor(0, 1)
+        self._separation.setStretchFactor(1, 0)
+        self._separation.setSizes([1150, 350])
+        self.setCentralWidget(self._separation)
 
         self._construire_barre_outils()
 
@@ -86,7 +90,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.statusBar().addPermanentWidget(self._etat_fps)
 
     def _construire_barre_outils(self) -> None:
-        barre = self.addToolBar("Source")
+        barre = self._barre_outils = self.addToolBar("Source")
         barre.setMovable(False)
 
         barre.addAction("Ouvrir une vidéo…", self._ouvrir).setShortcut("Ctrl+O")
@@ -96,7 +100,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.combo_norme = QtWidgets.QComboBox()
         for code, norme in NORMES.items():
             self.combo_norme.addItem(norme.nom, code)
-        self.combo_norme.setCurrentIndex(self.combo_norme.findData("PAL-BG"))
+        self.combo_norme.setCurrentIndex(self.combo_norme.findData("SECAM-L"))
         self.combo_norme.currentIndexChanged.connect(self._appliquer)
         barre.addWidget(self.combo_norme)
 
@@ -121,6 +125,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         barre.addSeparator()
         action = barre.addAction("Plein écran")
         action.setShortcut("F11")
+        action.setToolTip("Plein écran, interface masquée (F11 ou Échap pour revenir)")
         action.triggered.connect(self._basculer_plein_ecran)
 
     def _construire_transport(self) -> QtWidgets.QWidget:
@@ -129,7 +134,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.bouton_lecture.setFixedWidth(38)
         self.bouton_lecture.clicked.connect(self._basculer_lecture)
 
-        self.barre_position = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.barre_position = Glissiere(QtCore.Qt.Horizontal)
         self.barre_position.setEnabled(False)
         self.barre_position.sliderMoved.connect(self._chercher)
         self.barre_position.sliderReleased.connect(
@@ -152,12 +157,30 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.case_boucle.setChecked(True)
         self.case_boucle.toggled.connect(self.source.definir_boucle)
 
+        self.bouton_son = QtWidgets.QToolButton()
+        self.bouton_son.setText("🔊")
+        self.bouton_son.setCheckable(True)
+        self.bouton_son.setFixedWidth(32)
+        self.bouton_son.setToolTip("Couper le son")
+        self.bouton_son.toggled.connect(self._basculer_son)
+
+        self.barre_volume = Glissiere(QtCore.Qt.Horizontal)
+        self.barre_volume.setRange(0, 100)
+        self.barre_volume.setValue(80)
+        self.barre_volume.setFixedWidth(90)
+        self.barre_volume.setToolTip("Volume")
+        self.barre_volume.valueChanged.connect(
+            lambda v: self.source.definir_volume(v / 100.0)
+        )
+
         ligne = QtWidgets.QHBoxLayout()
         ligne.setContentsMargins(6, 0, 6, 4)
         ligne.addWidget(self.bouton_lecture)
         ligne.addWidget(self.barre_position, 1)
         ligne.addWidget(self.etiquette_temps)
         ligne.addWidget(self.combo_vitesse)
+        ligne.addWidget(self.bouton_son)
+        ligne.addWidget(self.barre_volume)
         ligne.addWidget(self.case_boucle)
 
         widget = QtWidgets.QWidget()
@@ -198,6 +221,11 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         # --- canal ---
         groupe = Groupe("Canal de transmission")
         self.case_bruit = QtWidgets.QCheckBox("Bruit")
+        # Coché d'emblée : une réception parfaite n'a jamais existé, et le
+        # grain fait partie de l'image autant que le fourmillement des points.
+        # On coche AVANT de connecter — pendant la construction du panneau, la
+        # barre d'outils n'existe pas encore et `_appliquer` échouerait.
+        self.case_bruit.setChecked(True)
         self.case_bruit.toggled.connect(self._appliquer)
         groupe.ajouter(self.case_bruit)
 
@@ -243,7 +271,23 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             "plus nettement qu'aucun tube ne l'a jamais fait."
         ))
 
-        self.curseur_halo = Curseur("Halo (dalle de verre)", 0.0, 1.0, 0.0, 0.02, "×", 2)
+        # Pas de 0,01 et non 0,02 : le curseur est entier sous le capot, et
+        # avec un pas de deux centièmes la valeur par défaut de 0,15 n'était
+        # tout simplement pas atteignable — elle se serait posée sur 0,16.
+        self.curseur_courbure = Curseur("Courbure de la dalle", 0.0, 1.0, 0.15, 0.01, "", 2)
+        self.curseur_coins = Curseur("Arrondi des coins", 0.0, 1.0, 0.0, 0.05, "", 2)
+        for curseur in (self.curseur_courbure, self.curseur_coins):
+            curseur.valeur_changee.connect(self._appliquer)
+            groupe.ajouter(curseur)
+        groupe.ajouter(note(
+            "La dalle est une calotte sphérique, sur laquelle le balayage peint "
+            "l'image à longueur d'arc constante. Le rayon va de 1,6 demi-diagonale "
+            "à fond — un poste des années 60 — à 4 vers 0,40, typique des années "
+            "80. Ce n'est pas une distorsion en barillet réglée au jugé : c'est "
+            "l'intersection d'un rayon avec la sphère."
+        ))
+
+        self.curseur_halo = Curseur("Halo (dalle de verre)", 0.0, 1.0, 0.06, 0.02, "×", 2)
         self.curseur_halo_seuil = Curseur("Seuil du halo", 0.0, 0.95, 0.55, 0.05, "", 2)
         self.curseur_halo_rayon = Curseur("Rayon du halo", 0.005, 0.10, 0.025, 0.005, "", 3)
         for curseur in (self.curseur_halo, self.curseur_halo_seuil,
@@ -326,6 +370,8 @@ class FenetreLecteur(QtWidgets.QMainWindow):
                 self.curseur_definition.valeur() if self.case_tube.isChecked() else 0.0
             ),
             echantillonnage=self.combo_echantillonnage.currentData(),
+            courbure=self.curseur_courbure.valeur(),
+            arrondi_coins=self.curseur_coins.valeur(),
             halo_intensite=self.curseur_halo.valeur(),
             halo_seuil=self.curseur_halo_seuil.valeur(),
             halo_rayon=self.curseur_halo_rayon.valeur(),
@@ -376,10 +422,16 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.combo_mire.setCurrentIndex(0)
         self._silencieux = False
 
-        self.barre_position.setEnabled(infos.nombre_images > 0)
-        self.barre_position.setRange(0, max(1, infos.nombre_images - 1))
+        # La barre est graduée en millisecondes : la seconde entière serait un
+        # cran trop gros pour se placer précisément dans un plan.
+        self.barre_position.setEnabled(infos.duree > 0)
+        self.barre_position.setRange(0, max(1, int(infos.duree * 1000)))
         self.source.definir_vitesse(self.combo_vitesse.currentData())
         self.source.definir_boucle(self.case_boucle.isChecked())
+        self.source.definir_volume(self.barre_volume.value() / 100.0)
+        self.source.definir_muet(self.bouton_son.isChecked())
+        self.barre_volume.setEnabled(infos.a_du_son)
+        self.bouton_son.setEnabled(infos.a_du_son)
         self.source.avancer_d_une_image()
         self.source.lire()
         self._maj_bouton()
@@ -394,9 +446,13 @@ class FenetreLecteur(QtWidgets.QMainWindow):
     def _maj_bouton(self) -> None:
         self.bouton_lecture.setText("❚❚" if self.source.en_lecture else "▶")
 
-    def _chercher(self, valeur: int) -> None:
+    def _chercher(self, millisecondes: int) -> None:
         if self.source.infos is not None:
-            self.source.chercher(valeur)
+            self.source.chercher(millisecondes / 1000.0)
+
+    def _basculer_son(self, coupe: bool) -> None:
+        self.source.definir_muet(coupe)
+        self.bouton_son.setText("🔇" if coupe else "🔊")
 
     # ------------------------------------------------------------------
     # Réactions
@@ -406,18 +462,19 @@ class FenetreLecteur(QtWidgets.QMainWindow):
     def _sur_image(self, image: np.ndarray) -> None:
         self.vue.definir_image(image)
 
-    @QtCore.pyqtSlot(int)
-    def _sur_position(self, position: int) -> None:
-        self._position = position
+    @QtCore.pyqtSlot(float)
+    def _sur_position(self, secondes: float) -> None:
+        self._position = secondes
         infos = self.source.infos
         if infos is None:
             return
         if not self.barre_position.isSliderDown():
             self.barre_position.blockSignals(True)
-            self.barre_position.setValue(position)
+            self.barre_position.setValue(int(secondes * 1000))
             self.barre_position.blockSignals(False)
-        courant = position / infos.images_par_seconde
-        self.etiquette_temps.setText(f"{_formater(courant)} / {_formater(infos.duree)}")
+        self.etiquette_temps.setText(
+            f"{_formater(secondes)} / {_formater(infos.duree)}"
+        )
 
     @QtCore.pyqtSlot(str)
     def _sur_erreur(self, message: str) -> None:
@@ -441,20 +498,47 @@ class FenetreLecteur(QtWidgets.QMainWindow):
                 self.combo_norme.setCurrentIndex(rang)
         elif touche == QtCore.Qt.Key_Escape and self.isFullScreen():
             self._basculer_plein_ecran()
+        elif touche == QtCore.Qt.Key_F11:
+            # Le raccourci porté par l'action de la barre d'outils cesse d'agir
+            # dès que celle-ci est masquée : en plein écran, il n'y a donc que
+            # cette voie-ci pour revenir.
+            self._basculer_plein_ecran()
         elif touche in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
-            infos = self.source.infos
-            if infos is not None:
-                pas = int(infos.images_par_seconde * 5)
-                delta = -pas if touche == QtCore.Qt.Key_Left else pas
-                self.source.chercher(self._position + delta)
+            if self.source.infos is not None:
+                delta = -5.0 if touche == QtCore.Qt.Key_Left else 5.0
+                self.source.chercher(max(0.0, self._position + delta))
+        elif touche == QtCore.Qt.Key_M:
+            self.bouton_son.toggle()
         else:
             super().keyPressEvent(evenement)
 
     def _basculer_plein_ecran(self) -> None:
+        """Plein écran, et l'interface avec lui.
+
+        Le but de l'outil est de regarder une image ; en plein écran on ne
+        garde donc que la dalle. Barre d'outils, panneau de réglages, transport
+        et barre d'état disparaissent — l'écran n'affiche plus que le tube, sur
+        fond noir.
+
+        On mémorise le partage du séparateur avant de replier le panneau :
+        masquer un volet de QSplitter met sa largeur à zéro, et sans cela il
+        reviendrait écrasé.
+        """
         if self.isFullScreen():
             self.showNormal()
+            self._montrer_interface(True)
         else:
+            self._tailles_separation = self._separation.sizes()
+            self._montrer_interface(False)
             self.showFullScreen()
+
+    def _montrer_interface(self, visible: bool) -> None:
+        self._barre_outils.setVisible(visible)
+        self._panneau.setVisible(visible)
+        self._barre_transport.setVisible(visible)
+        self.statusBar().setVisible(visible)
+        if visible and self._tailles_separation:
+            self._separation.setSizes(self._tailles_separation)
 
     def dragEnterEvent(self, evenement):  # noqa: N802 - API Qt
         if evenement.mimeData().hasUrls():
@@ -466,6 +550,14 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             if chemin and Path(chemin).is_file():
                 self._ouvrir_chemin(chemin)
                 break
+
+    def resizeEvent(self, evenement):  # noqa: N802 - API Qt
+        # La finesse d'affichage — combien de pixels d'écran par ligne de
+        # balayage — figure dans la description, et elle ne dépend que de la
+        # taille de la fenêtre. Sans ce rappel, elle resterait figée sur la
+        # valeur du dernier changement de réglage.
+        super().resizeEvent(evenement)
+        self.etiquette_norme.setText(self.vue.description())
 
     def closeEvent(self, evenement):  # noqa: N802 - API Qt
         self.source.fermer()
