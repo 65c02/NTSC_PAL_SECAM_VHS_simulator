@@ -29,7 +29,15 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from tvcolor.constantes import obtenir_norme
 
-from .gl_util import Cible, Programme, Quad, TextureImage, assembler, lire_source
+from .gl_util import (
+    Cible,
+    Programme,
+    Quad,
+    TextureImage,
+    assembler,
+    assembler_simple,
+    lire_source,
+)
 from .normes_gl import ReglageGL, reglage, sigma_du_tube
 
 FICHIER_NORME = {"NTSC": "ntsc.glsl", "PAL": "pal.glsl", "SECAM": "secam.glsl"}
@@ -56,6 +64,18 @@ class ParametresRendu:
     lignes_balayage: float = 0.0
     masque_tube: float = 0.0
     luminosite: float = 1.0
+
+    halo_intensite: float = 0.0
+    """Fraction de la lumière qui repart en halo. 0 désactive les trois passes."""
+
+    halo_seuil: float = 0.55
+    """Niveau à partir duquel la lumière diffuse. À zéro c'est la halation, qui
+    est linéaire ; relevé, c'est l'épanouissement du faisceau, qui ne touche que
+    les hautes lumières."""
+
+    halo_rayon: float = 0.025
+    """Rayon du halo, en fraction de la hauteur d'image — donc indépendant de
+    la résolution de la grille comme de celle de l'écran."""
 
     definition_tube: float = 0.0
     """Définition horizontale du tube, en lignes. 0 désactive la simulation du
@@ -138,6 +158,16 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._programme_presentation = Programme(
             self._sommet, lire_source("presentation.frag"), "présentation"
         )
+        # Deux programmes plutôt qu'un seul avec un branchement : le pilote
+        # peut dérouler chaque boucle sans réserve.
+        self._programme_halo_extraction = Programme(
+            self._sommet,
+            assembler_simple("bloom.glsl", {"PASSE_EXTRACTION": None}),
+            "halo/extraction",
+        )
+        self._programme_halo_flou = Programme(
+            self._sommet, assembler_simple("bloom.glsl"), "halo/flou"
+        )
         # Chronomètre GPU. Mesurer le temps de rendu avec l'horloge du
         # processeur ne veut rien dire : les commandes OpenGL sont empilées et
         # rendent la main aussitôt, ce qui donne des cadences fantaisistes de
@@ -193,6 +223,13 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         largeur, hauteur = self._reglage.largeur, self._reglage.hauteur
         self._cibles["composite"] = Cible(largeur, hauteur, GL.GL_R16F)
         self._cibles["resultat"] = Cible(largeur, hauteur, GL.GL_RGBA8)
+
+        # Le halo travaille au quart de la résolution. Il est flou par
+        # définition : y consacrer la pleine résolution ne changerait rien à
+        # l'image et coûterait seize fois plus.
+        quart = (max(16, largeur // 4), max(16, hauteur // 4))
+        for nom in ("halo_a", "halo_b"):
+            self._cibles[nom] = Cible(*quart, GL.GL_RGBA16F, GL.GL_LINEAR)
         if self._reglage.famille == "SECAM":
             self._cibles["prepare"] = Cible(largeur, hauteur, GL.GL_RG32F)
             self._cibles["scan_a"] = Cible(largeur, hauteur, GL.GL_R32F)
@@ -319,6 +356,8 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             self._passe_decodage()
             if self._capture_demandee:
                 self._capturer()
+            if self.parametres.halo_intensite > 0.0:
+                self._passes_halo()
 
         self._passe_presentation()
 
@@ -433,6 +472,46 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._cibles["composite"].lier(UNITE_COMPOSITE)
         self._quad.dessiner()
 
+    def _passes_halo(self) -> None:
+        """Extraction, flou horizontal, flou vertical — au quart de résolution."""
+        p = self.parametres
+        source = self._cibles["resultat"]
+        a, b = self._cibles["halo_a"], self._cibles["halo_b"]
+        taille_quart = (float(a.largeur), float(a.hauteur))
+
+        # Le rayon est donné en fraction de la hauteur d'image ; on le convertit
+        # en texels du tampon réduit, ce qui le rend indépendant de la grille.
+        sigma = max(0.05, p.halo_rayon * a.hauteur)
+
+        a.activer()
+        self._programme_halo_extraction.utiliser()
+        self._programme_halo_extraction.definir("u_image", 0)
+        self._programme_halo_extraction.definir(
+            "u_taille", (float(source.largeur), float(source.hauteur))
+        )
+        # Le seuil se règle en niveau AFFICHÉ — c'est ainsi qu'on le pense en
+        # tournant le bouton — mais se compare en LUMIÈRE, seul domaine où
+        # additionner des sources a un sens. La conversion se fait ici.
+        gamma = float(self._reglage.norme.gamma_affichage)
+        bas = float(np.clip(p.halo_seuil, 0.0, 0.99)) ** gamma
+        haut = float(np.clip(p.halo_seuil + 0.22, 0.02, 1.0)) ** gamma
+        self._programme_halo_extraction.definir("u_seuil", bas)
+        self._programme_halo_extraction.definir("u_seuil_haut", max(haut, bas + 1e-4))
+        self._programme_halo_extraction.definir("u_gamma", gamma)
+        source.lier(0)
+        self._quad.dessiner()
+
+        self._programme_halo_flou.utiliser()
+        self._programme_halo_flou.definir("u_image", 0)
+        self._programme_halo_flou.definir("u_taille", taille_quart)
+        self._programme_halo_flou.definir("u_sigma", float(sigma))
+
+        for cible, entree, direction in ((b, a, (1.0, 0.0)), (a, b, (0.0, 1.0))):
+            cible.activer()
+            self._programme_halo_flou.definir("u_direction", direction)
+            entree.lier(0)
+            self._quad.dessiner()
+
     def _passe_presentation(self) -> None:
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.defaultFramebufferObject())
         ratio = self.devicePixelRatioF()
@@ -461,6 +540,11 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             "u_sigma_tube",
             sigma_du_tube(p.definition_tube, self._reglage.largeur),
         )
+        programme.definir("u_halo", 1)
+        programme.definir("u_halo_intensite", float(p.halo_intensite))
+        programme.definir("u_gamma", float(self._reglage.norme.gamma_affichage))
+        if p.halo_intensite > 0.0:
+            self._cibles["halo_a"].lier(1)
 
         GL.glActiveTexture(GL.GL_TEXTURE0)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._cibles["resultat"].texture)

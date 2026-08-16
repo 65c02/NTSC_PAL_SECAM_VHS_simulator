@@ -145,9 +145,40 @@ seuil de visibilité ; sur un moniteur, il est trois fois et demie plus gros et
 saute aux yeux. Mesuré sur une image blanche en SECAM, la simulation du tube le
 ramène de 2,1 à 0,6 niveau sur 255.
 
-Le réglage agit dans la passe de présentation, jamais dans la chaîne de
-signal : c'est une caractéristique d'**affichage**, et la comparaison avec le
-simulateur de référence reste ainsi exacte.
+### Le halo
+
+Un tube ne se contente pas de flouter. Deux phénomènes de plus, réunis sous le
+nom de *bloom* :
+
+* la **halation** — la lumière du luminophore traverse une dalle de verre
+  épaisse, s'y diffuse et se réfléchit sur la face avant. Une petite fraction
+  de chaque point repart en un halo large et faible. Phénomène **linéaire**,
+  proportionnel à la lumière émise ;
+* l'**épanouissement du faisceau** — à fort courant le spot s'élargit et perd
+  sa mise au point. Franchement **non linéaire** : le blanc bave sur les
+  génériques quand les gris restent nets.
+
+Le seuil réglable interpole entre les deux : à zéro tout diffuse, relevé seules
+les hautes lumières s'épanouissent.
+
+Trois passes au quart de la résolution — extraction avec réduction, flou
+horizontal, flou vertical. Un flou gaussien étant séparable, deux passes de
+treize échantillons valent une passe de cent soixante-neuf. **Coût mesuré :
+1,09 ms sans halo, 1,12 ms avec**, soit dans le bruit de mesure.
+
+Deux points d'implémentation :
+
+* l'addition se fait en **lumière**, jamais sur les valeurs affichées. Deux
+  sources lumineuses s'additionnent ; leurs racines gamma-ièmes non. Un halo
+  calculé en valeurs affichées paraît trop fort dans les ombres et trop faible
+  dans les hautes lumières — exactement l'inverse d'une dalle de verre ;
+* le **seuil se règle en niveau affiché** mais se compare en lumière. Sans
+  cette conversion, un réglage à 0,55 correspondrait en réalité à un gris de
+  0,81 à l'écran.
+
+Tous ces réglages agissent dans la passe de présentation, jamais dans la chaîne
+de signal : ce sont des caractéristiques d'**affichage**, et la comparaison
+avec le simulateur de référence reste ainsi exacte.
 
 ### Deux réglages qui ne se devinent pas
 
@@ -226,7 +257,8 @@ shaders/          les trois shaders GLSL, un par norme
   pal.glsl          idem, avec l'inversion de V ligne à ligne
   secam.glsl        modulation de fréquence, séquentielle
   scan.frag         somme préfixe : l'intégrale de phase du SECAM
-  presentation.frag mise à l'échelle, lignes de balayage, masque de tube
+  bloom.glsl        halation et épanouissement du faisceau
+  presentation.frag mise à l'échelle, définition du tube, lignes, masque
   sommet.vert       triangle plein écran, sans tampon de sommets
 
 lecteur/          le lecteur vidéo temps réel

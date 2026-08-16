@@ -243,6 +243,20 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             "plus nettement qu'aucun tube ne l'a jamais fait."
         ))
 
+        self.curseur_halo = Curseur("Halo (dalle de verre)", 0.0, 1.0, 0.0, 0.02, "×", 2)
+        self.curseur_halo_seuil = Curseur("Seuil du halo", 0.0, 0.95, 0.55, 0.05, "", 2)
+        self.curseur_halo_rayon = Curseur("Rayon du halo", 0.005, 0.10, 0.025, 0.005, "", 3)
+        for curseur in (self.curseur_halo, self.curseur_halo_seuil,
+                        self.curseur_halo_rayon):
+            curseur.valeur_changee.connect(self._appliquer)
+            groupe.ajouter(curseur)
+        groupe.ajouter(note(
+            "La dalle de verre diffuse une part de la lumière du luminophore, "
+            "et le spot s'épanouit quand le courant de faisceau monte. Seuil à "
+            "zéro : tout diffuse, comme la halation. Seuil relevé : seules les "
+            "hautes lumières bavent, comme un faisceau saturé."
+        ))
+
         self.combo_echantillonnage = QtWidgets.QComboBox()
         for libelle, code in (
             ("normatif — 4 points par cycle", "normatif"),
@@ -312,6 +326,9 @@ class FenetreLecteur(QtWidgets.QMainWindow):
                 self.curseur_definition.valeur() if self.case_tube.isChecked() else 0.0
             ),
             echantillonnage=self.combo_echantillonnage.currentData(),
+            halo_intensite=self.curseur_halo.valeur(),
+            halo_seuil=self.curseur_halo_seuil.valeur(),
+            halo_rayon=self.curseur_halo_rayon.valeur(),
             animer=self.case_animer.isChecked(),
             conserver_proportions=self.case_proportions.isChecked(),
         )

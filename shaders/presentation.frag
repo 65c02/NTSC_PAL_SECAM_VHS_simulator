@@ -28,6 +28,9 @@ uniform float u_lignes;          // intensité des lignes de balayage, 0 à 1
 uniform float u_masque;          // intensité du masque de tube, 0 à 1
 uniform float u_luminosite;
 uniform float u_sigma_tube;      // spot du faisceau, en points de la grille
+uniform sampler2D u_halo;
+uniform float u_halo_intensite;  // fraction de lumière repartie en halo
+uniform float u_gamma;           // gamma de l'écran, pour passer en lumière
 
 in  vec2 v_uv;
 out vec4 sortie;
@@ -87,6 +90,16 @@ void main()
     uv.y = 1.0 - uv.y;
 
     vec3 rgb = reponse_du_tube(uv);
+
+    if (u_halo_intensite > 0.0)
+    {
+        // Le halo s'AJOUTE en lumière, pas en valeurs affichées : deux
+        // sources lumineuses s'additionnent, leurs racines gamma-ièmes non.
+        // On repasse donc en lumière le temps de l'addition.
+        vec3 lumiere = pow(max(rgb, 0.0), vec3(u_gamma));
+        lumiere += u_halo_intensite * texture(u_halo, uv).rgb;
+        rgb = pow(max(lumiere, 0.0), vec3(1.0 / u_gamma));
+    }
 
     if (u_lignes > 0.0)
     {

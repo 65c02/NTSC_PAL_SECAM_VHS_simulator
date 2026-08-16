@@ -49,6 +49,21 @@ def assembler(fichier: str, defines: dict[str, object] | None = None) -> str:
     return "\n".join(lignes)
 
 
+def assembler_simple(fichier: str, defines: dict[str, object] | None = None) -> str:
+    """Assemble un shader autonome : version et défines, mais pas `commun.glsl`.
+
+    Sert aux passes qui ne touchent pas au codage couleur — le halo, la somme
+    préfixe, la présentation. Leur imposer l'entête commun les obligerait à
+    déclarer N_TAPS et N_NOTCH, dont elles n'ont que faire, et à recompiler à
+    chaque changement de qualité.
+    """
+    lignes = ["#version 330 core"]
+    for cle, valeur in (defines or {}).items():
+        lignes.append(f"#define {cle} {valeur}" if valeur is not None else f"#define {cle}")
+    lignes.append(lire_source(fichier))
+    return "\n".join(lignes)
+
+
 def _compiler(source: str, type_shader, etiquette: str) -> int:
     shader = GL.glCreateShader(type_shader)
     GL.glShaderSource(shader, source)
@@ -141,9 +156,15 @@ class Programme:
 class Cible:
     """Un tampon d'image hors écran, avec sa texture attachée."""
 
-    def __init__(self, largeur: int, hauteur: int, format_interne=GL.GL_R16F):
+    def __init__(
+        self, largeur: int, hauteur: int, format_interne=GL.GL_R16F, filtrage=None
+    ):
         self.largeur, self.hauteur = largeur, hauteur
         self.format_interne = format_interne
+        # Au plus proche par défaut : les boucles de filtrage visent des
+        # centres de texel exacts. Les tampons de halo, eux, sont flous par
+        # nature et agrandis à l'affichage : ils veulent du bilinéaire.
+        filtrage = GL.GL_NEAREST if filtrage is None else filtrage
 
         self.texture = GL.glGenTextures(1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture)
@@ -153,8 +174,8 @@ class Cible:
             canal, type_donnees, None,
         )
         for parametre, valeur in (
-            (GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST),
-            (GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST),
+            (GL.GL_TEXTURE_MIN_FILTER, filtrage),
+            (GL.GL_TEXTURE_MAG_FILTER, filtrage),
             (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE),
             (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE),
         ):
@@ -190,6 +211,7 @@ def _description(format_interne):
         GL.GL_R16F: (GL.GL_RED, GL.GL_FLOAT),
         GL.GL_R32F: (GL.GL_RED, GL.GL_FLOAT),
         GL.GL_RG32F: (GL.GL_RG, GL.GL_FLOAT),
+        GL.GL_RGBA16F: (GL.GL_RGBA, GL.GL_FLOAT),
         GL.GL_RGBA8: (GL.GL_RGBA, GL.GL_UNSIGNED_BYTE),
     }[format_interne]
 
