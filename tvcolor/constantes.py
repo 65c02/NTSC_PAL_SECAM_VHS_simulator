@@ -103,6 +103,100 @@ BURST_AMPLITUDE = 0.30            # relative à l'amplitude vidéo
 
 
 # ---------------------------------------------------------------------------
+# La voie son
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class VoieSon:
+    """Description de la porteuse son d'un système de télévision.
+
+    Le son d'un téléviseur analogique ne voyage **pas** dans le signal vidéo :
+    il occupe sa propre porteuse, plus haut dans le même canal radio, quelques
+    mégahertz au-dessus de la porteuse image. Les deux voyagent ensemble,
+    subissent le même bruit, et se retrouvent dans le même amplificateur à
+    fréquence intermédiaire — c'est de cette cohabitation que naissent le
+    ronflement de trame et le sifflement de ligne.
+
+    Les récepteurs à *intercarrier*, qui sont la quasi-totalité d'entre eux
+    depuis les années 1950, ne démodulent pas la porteuse son directement :
+    ils exploitent le **battement** entre elle et la porteuse image, dont la
+    fréquence est par construction la différence des deux — 4,5 MHz en système
+    M, 5,5 en B/G, 6,5 en L. Le procédé est d'une stabilité remarquable, la
+    dérive de l'oscillateur local s'annulant dans la soustraction. Il a un
+    prix : toute modulation de phase parasite de la porteuse image se retrouve
+    telle quelle sur le battement, et donc dans le haut-parleur.
+    """
+
+    decalage: float
+    """Écart entre porteuse son et porteuse image, en hertz. C'est aussi, et
+    exactement, la fréquence du battement intercarrier."""
+
+    modulation: str
+    """« FM » ou « AM ». Le système L, celui de la France, est le seul d'Europe
+    occidentale à moduler son en amplitude — choix qui va de pair avec sa
+    modulation vidéo positive, et qui rend son son bien plus fragile au bruit
+    que celui de ses voisins."""
+
+    deviation: float
+    """Excursion de fréquence crête, en hertz. Sans objet en AM."""
+
+    taux_am: float
+    """Taux de modulation en AM. Sans objet en FM."""
+
+    preaccentuation: float
+    """Constante de temps de préaccentuation, en secondes. 50 µs en Europe,
+    75 µs en Amérique du Nord. Zéro quand il n'y en a pas.
+
+    Elle relève les aigus à l'émission pour les rabaisser à la réception. Le
+    bruit d'un discriminateur FM croissant en fréquence — il est *triangulaire*
+    et non blanc — l'abaissement de la réception attaque le bruit là où il est
+    le plus fort, sans avoir touché au signal."""
+
+    bande_audio: float
+    """Bande passante audio, en hertz."""
+
+    niveau_porteuse_db: float
+    """Puissance de la porteuse son, en décibels sous la crête de la porteuse
+    image. Toujours négative : le son est émis nettement plus faible que
+    l'image, parce que la modulation de fréquence n'a pas besoin de plus."""
+
+
+SON_M = VoieSon(
+    decalage=4.5e6, modulation="FM", deviation=25e3, taux_am=0.0,
+    preaccentuation=75e-6, bande_audio=15e3, niveau_porteuse_db=-10.0,
+)
+"""Système M. L'excursion n'est que de ±25 kHz, moitié de celle de l'Europe :
+le canal de 6 MHz était trop étroit pour davantage. Le son du NTSC est donc,
+toutes choses égales par ailleurs, plus bruité que celui du PAL."""
+
+SON_BG = VoieSon(
+    decalage=5.5e6, modulation="FM", deviation=50e3, taux_am=0.0,
+    preaccentuation=50e-6, bande_audio=15e3, niveau_porteuse_db=-13.0,
+)
+
+SON_I = VoieSon(
+    decalage=6.0e6, modulation="FM", deviation=50e3, taux_am=0.0,
+    preaccentuation=50e-6, bande_audio=15e3, niveau_porteuse_db=-10.0,
+)
+
+SON_L = VoieSon(
+    decalage=6.5e6, modulation="AM", deviation=0.0, taux_am=0.54,
+    preaccentuation=0.0, bande_audio=15e3, niveau_porteuse_db=-10.0,
+)
+"""Système L, celui de la France. Son en **amplitude**, sans préaccentuation.
+
+C'est la particularité la plus audible du SECAM-L, et elle n'a rien de
+théorique : privée du gain de démodulation de la FM — une vingtaine de
+décibels — la voie son se dégrade en même temps que l'image, au lieu de rester
+propre bien après que celle-ci ait commencé à neiger."""
+
+SON_DK = VoieSon(
+    decalage=6.5e6, modulation="FM", deviation=50e3, taux_am=0.0,
+    preaccentuation=50e-6, bande_audio=15e3, niveau_porteuse_db=-13.0,
+)
+
+
+# ---------------------------------------------------------------------------
 # Description d'une norme
 # ---------------------------------------------------------------------------
 
@@ -133,6 +227,7 @@ class Norme:
 
     base_chroma: str = "UV"       # « UV », « IQ » ou « DRDB »
     surechantillonnage: int = 4   # f_échantillonnage = N · f_sc
+    son: VoieSon = SON_BG         # porteuse son du système
 
     # Champs dérivés, remplis par __post_init__
     duree_ligne: float = field(init=False)
@@ -200,6 +295,7 @@ NTSC_M = Norme(
     gamma_affichage=2.2,
     primaires="smpte-c",
     base_chroma="IQ",
+    son=SON_M,
 )
 
 NTSC_J = Norme(
@@ -220,6 +316,7 @@ NTSC_J = Norme(
     gamma_affichage=2.2,
     primaires="smpte-c",
     base_chroma="IQ",
+    son=SON_M,
 )
 
 NTSC_1953 = Norme(
@@ -240,6 +337,7 @@ NTSC_1953 = Norme(
     gamma_affichage=2.2,
     primaires="ntsc1953",
     base_chroma="IQ",
+    son=SON_M,
 )
 
 PAL_BG = Norme(
@@ -260,6 +358,7 @@ PAL_BG = Norme(
     gamma_affichage=2.8,
     primaires="ebu",
     base_chroma="UV",
+    son=SON_BG,
 )
 
 PAL_I = Norme(
@@ -280,6 +379,7 @@ PAL_I = Norme(
     gamma_affichage=2.8,
     primaires="ebu",
     base_chroma="UV",
+    son=SON_I,
 )
 
 SECAM_L = Norme(
@@ -300,6 +400,7 @@ SECAM_L = Norme(
     gamma_affichage=2.8,
     primaires="ebu",
     base_chroma="DRDB",
+    son=SON_L,
 )
 
 SECAM_DK = Norme(
@@ -320,6 +421,7 @@ SECAM_DK = Norme(
     gamma_affichage=2.8,
     primaires="ebu",
     base_chroma="DRDB",
+    son=SON_DK,
 )
 
 
