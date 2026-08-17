@@ -140,6 +140,8 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._cle_reglage: tuple | None = None
         self._capture_demandee = False
         self._capture: np.ndarray | None = None
+        self._export_demande: tuple[int, int] | None = None
+        self._export: np.ndarray | None = None
 
         self._instants: list[float] = []
         self.duree_gpu = 0.0
@@ -335,6 +337,42 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             note = f"{finesse:.2f} pixel par ligne — sous la limite de Shannon"
         return f"{self._reglage.description()} · {note}"
 
+    def rendre_pour_export(self, largeur: int, hauteur: int) -> np.ndarray | None:
+        """Rend une image complète, effets de tube compris, hors écran.
+
+        C'est ce que l'export MP4 enregistre : non pas l'image décodée nue,
+        mais **ce que la fenêtre montre** — courbure, réponse du tube, halo,
+        lignes de balayage. Exporter autre chose serait déroutant : on
+        enregistre ce qu'on a réglé.
+
+        Comme pour `image_rendue`, la demande est déposée puis honorée à
+        l'intérieur de la passe de rendu, jamais depuis l'extérieur.
+        """
+        if not self._pret:
+            return None
+        self._export_demande = (int(largeur), int(hauteur))
+        self._export = None
+        self.update()
+        QtWidgets.QApplication.processEvents()
+        return self._export
+
+    def _rendre_export(self) -> None:
+        largeur, hauteur = self._export_demande
+        cible = self._cibles.get("export")
+        if cible is None or (cible.largeur, cible.hauteur) != (largeur, hauteur):
+            if cible is not None:
+                cible.supprimer()
+            cible = Cible(largeur, hauteur, GL.GL_RGBA8, GL.GL_LINEAR)
+            self._cibles["export"] = cible
+
+        self._passe_presentation(cible)
+
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, cible.fbo)
+        donnees = GL.glReadPixels(0, 0, largeur, hauteur, GL.GL_RGB, GL.GL_UNSIGNED_BYTE)
+        tableau = np.frombuffer(donnees, dtype=np.uint8).reshape(hauteur, largeur, 3)
+        self._export = tableau[::-1].copy()
+        self._export_demande = None
+
     def image_rendue(self) -> np.ndarray | None:
         """Relit le résultat décodé, à la géométrie de la norme. Pour les tests.
 
@@ -397,6 +435,8 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
                 self._capturer()
             if self.parametres.halo_intensite > 0.0:
                 self._passes_halo()
+            if self._export_demande is not None:
+                self._rendre_export()
 
         self._passe_presentation()
 
@@ -551,12 +591,25 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             entree.lier(0)
             self._quad.dessiner()
 
-    def _passe_presentation(self) -> None:
-        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.defaultFramebufferObject())
-        ratio = self.devicePixelRatioF()
-        largeur = max(1, int(self.width() * ratio))
-        hauteur = max(1, int(self.height() * ratio))
-        GL.glViewport(0, 0, largeur, hauteur)
+    def _passe_presentation(self, cible=None) -> None:
+        """Dessine l'image finale, dans la fenêtre ou dans une cible hors écran.
+
+        Le second cas sert à l'export : la géométrie du tube — courbure,
+        arrondi des coins, pas des lignes de balayage — se calcule à partir de
+        la taille de la SURFACE VISÉE, pas de celle de la fenêtre. Exporter en
+        1440 points de haut depuis une fenêtre de 700 donne donc, et c'est
+        voulu, des lignes de balayage bien plus franches : il y a deux fois
+        plus de pixels pour les porter.
+        """
+        if cible is None:
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.defaultFramebufferObject())
+            ratio = self.devicePixelRatioF()
+            largeur = max(1, int(self.width() * ratio))
+            hauteur = max(1, int(self.height() * ratio))
+            GL.glViewport(0, 0, largeur, hauteur)
+        else:
+            cible.activer()
+            largeur, hauteur = cible.largeur, cible.hauteur
         GL.glClear(GL.GL_COLOR_BUFFER_BIT)
 
         if "resultat" not in self._cibles:
