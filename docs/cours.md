@@ -30,7 +30,8 @@ le test qui le contrôle.
 11. [Ce que tout cela fait au RGB d'origine](#11-ce-que-tout-cela-fait-au-rgb-dorigine)
 12. [Les shaders : la même chaîne, en temps réel](#12-les-shaders--la-même-chaîne-en-temps-réel)
 13. [Le son : l'autre porteuse](#13-le-son--lautre-porteuse)
-14. [Annexes](#14-annexes)
+14. [La cassette : ce qu'un magnétoscope fait au signal](#14-la-cassette--ce-quun-magnétoscope-fait-au-signal)
+15. [Annexes](#15-annexes)
 
 ---
 
@@ -1903,7 +1904,47 @@ Une source silencieuse encaisse tout le gain sans la moindre distorsion ; une
 source déjà forte n'en prend que ce qui reste de marge. C'est exactement le
 comportement d'un amplificateur, et non celui d'un multiplicateur.
 
-### 13.8 Ce qui n'est pas simulé, et pourquoi
+### 13.8 Où l'on remonte le niveau, et pourquoi ça change tout
+
+Le son n'est pas toujours gravé au bon niveau, et la question se pose alors :
+où le remonter ? La réponse n'est pas indifférente, et la chaîne le montre
+sans ambiguïté.
+
+Le simulateur offre deux gains. L'un est placé **avant** la modulation — c'est
+le réglage du studio. L'autre est **après** la démodulation — c'est le bouton
+de volume du poste. Mesuré sur une source gravée bas, amplitude 0,05, dans un
+canal à 25 dB de rapport signal/bruit :
+
+| gain appliqué | avant modulation | après démodulation |
+|---|---|---|
+| +0 dB | 33,5 dB | 33,5 dB |
+| +6 dB | **39,6** | 33,5 |
+| +12 dB | **45,6** | 33,5 |
+| +18 dB | **51,4** | 33,5 |
+| +24 dB | 51,9 | 33,5 |
+
+Un décibel de gain avant modulation rend **un décibel de rapport
+signal/bruit**. Un décibel après démodulation n'en rend aucun.
+
+La raison est immédiate une fois posée : la modulation de fréquence code le
+signal dans l'**excursion**, et le bruit du canal se traduit en une erreur de
+fréquence qui, elle, ne dépend pas du signal. Sous-moduler, c'est donc laisser
+inemployée une partie de l'excursion que la norme accorde — et le rapport entre
+le signal et l'erreur de fréquence s'en ressent d'autant. Remonter le niveau
+après le démodulateur remonte le bruit avec.
+
+C'est pour cela qu'un diffuseur surveille sa modulation, et c'est ce qu'il faut
+pousser quand la source est faible. Le plafond n'est pas loin : à +24 dB dans
+l'essai ci-dessus l'excursion est pleine, le gain cesse de rendre quoi que ce
+soit, et au-delà le limiteur de l'émetteur écrête — la distorsion passe de 0,05
+à 15 %, exactement comme sur un émetteur réellement surmodulé.
+
+> **Vérifié par** — `tests/test_son.py::test_le_gain_avant_modulation_ameliore_vraiment_le_rapport_signal_bruit`
+> et son pendant `::test_le_gain_apres_demodulation_n_ameliore_rien`. Le second
+> n'est pas un doublon : s'il échouait, c'est qu'un gain se serait glissé du
+> mauvais côté du démodulateur.
+
+### 13.9 Ce qui n'est pas simulé, et pourquoi
 
 **La stéréophonie.** Le son de la télévision analogique, tel que décrit ici,
 est monophonique. Le NICAM et le Zweiton sont venus dans les années 1980 et
@@ -1931,7 +1972,376 @@ qui laisse le lecteur vidéo parfaitement à l'aise.
 
 ---
 
-## 14. Annexes
+## 14. La cassette : ce qu'un magnétoscope fait au signal
+
+Tout ce qui précède décrit un signal qui va de l'émetteur au téléviseur. Entre
+les deux, pendant vingt-cinq ans, il y a eu un magnétoscope — et il ne s'est
+pas contenté de transporter le signal, il l'a **démonté**.
+
+C'est ce démontage, bien plus que le bruit de bande, qui donne au VHS son
+aspect si reconnaissable qu'on l'identifie en une image.
+
+### 14.1 Pourquoi le signal ne peut pas être enregistré tel quel
+
+Deux obstacles, tous deux rédhibitoires.
+
+**La bande passante.** Un signal composite occupe cinq mégahertz. La vitesse
+relative entre la tête et la bande, dans un magnétoscope grand public, ne
+permet guère d'en écrire plus de trois — et cela au prix d'une tête tournante,
+d'un tambour incliné et d'un enregistrement en pistes obliques, déjà des
+prouesses mécaniques.
+
+**Le contact.** La tête et la bande ne se touchent pas d'une pression
+constante : le contact fluctue énormément, et l'amplitude du signal lu avec
+lui. Un enregistrement en **amplitude** donnerait une image dont la luminosité
+papillonnerait au rythme du défilement. Insupportable.
+
+D'où le procédé, qui tient en trois idées :
+
+1. **séparer** luminance et chrominance dès l'entrée ;
+2. **moduler la luminance en fréquence** — 3,8 à 4,8 MHz en PAL — puisque la
+   modulation de fréquence se moque de l'amplitude ;
+3. **transposer la chrominance sous elle**, autour de 627 kHz. D'où le nom du
+   procédé, *color-under*.
+
+### 14.2 Le prix de la place : la couleur du VHS
+
+La transposition est faite pour de bon dans le simulateur — on multiplie par un
+oscillateur local, on filtre, on remultiplie — parce que c'est de là que sort
+la caractéristique la plus voyante du format.
+
+La chrominance transposée ne dispose plus que d'environ **400 kHz**, contre
+1,3 MHz à l'antenne. Sa définition horizontale tombe à :
+
+$$N = 2 \times (400\,\text{kHz} \times 51{,}95\,\mu\text{s}) \times \tfrac{3}{4}
+  \approx 31\ \text{lignes}$$
+
+contre 240 lignes pour la luminance. **Un facteur huit.** Un aplat rouge sur
+fond blanc ne bave pas un peu : il bave sur un huitième de la largeur utile.
+C'est ce qu'on voit au premier coup d'œil sur la figure suivante, et c'est ce
+qui trahit une cassette même quand tout le reste est propre.
+
+La fréquence de transposition, 40,125 fois la fréquence ligne, n'est d'ailleurs
+pas choisie au hasard : le quart de multiple joue exactement le rôle du
+demi-multiple du chapitre 5. Il fait que le motif résiduel s'inverse d'une
+ligne à la suivante au lieu de s'y superposer.
+
+### 14.3 Ce qu'on voit, et ce qu'on mesure
+
+![Ce qu'une cassette fait au signal](figures/23_vhs.png)
+
+| | ΔE moyen | bande luma | bande chroma | définition chroma |
+|---|---|---|---|---|
+| direct | 2,5 | 5,0 MHz | 1,3 MHz | 100 lignes |
+| VHS SP | 13,2 | 3,0 MHz | 0,40 MHz | 31 lignes |
+| VHS LP | — | 2,6 MHz | 0,35 MHz | 27 lignes |
+| VHS EP | — | 2,0 MHz | 0,29 MHz | 22 lignes |
+| EP, 2ᵉ copie, bande usée | 26,8 | 1,7 MHz | 0,25 MHz | 19 lignes |
+
+Le volet du bas de la figure est le plus instructif. C'est le signal composite
+d'une même ligne, avant et après la cassette, sur une transition de couleur.
+On y voit la sous-porteuse s'affaisser et la luminance s'arrondir — et l'on
+comprend que la dégradation n'est pas un voile posé sur l'image, mais une
+**altération de la forme d'onde elle-même**.
+
+Au milieu d'un aplat, en revanche, les trois courbes se superposent presque :
+la sous-porteuse y est stable et la cassette la restitue fidèlement. Tout se
+joue aux transitions, là où la bande passante décide.
+
+### 14.4 La mécanique
+
+Aux limites de bande s'ajoutent les défauts d'un objet qui tourne et qui
+frotte.
+
+**La gigue de défilement.** La bande n'avance pas d'un mouvement parfait ; le
+début de chaque ligne se décale de quelques dixièmes de microseconde, et **les
+verticales ondulent**. C'est l'artefact le plus reconnaissable du format,
+impossible à confondre avec autre chose.
+
+Le décalage est *lissé verticalement* dans la simulation, et ce n'est pas un
+raffinement : tiré indépendamment ligne à ligne il donnerait un grésillement de
+haute fréquence — du bruit — alors qu'une mécanique a de l'inertie et produit
+une ondulation lente.
+
+**Et surtout, la gigue ne fait pas tourner la teinte.** Le point mérite qu'on
+s'y arrête, parce qu'il a coûté deux fautes. Décaler le composite de deux
+points d'échantillonnage, à $f_{sc} = f_e/4$, c'est tourner la sous-porteuse
+d'un demi-tour : le magenta ressort vert. Un magnétoscope ne fait pas cela —
+sa porteuse de relecture est **régénérée à partir du signal lu**, donc décalée
+d'autant, et l'erreur s'annule dans la démodulation. C'est même toute la raison
+d'être du color-under : les erreurs de base de temps s'éliminent d'elles-mêmes.
+
+La gigue s'applique donc à l'**enveloppe** de la chrominance, jamais à sa
+porteuse. Même remarque pour le retard de la voie couleur : 0,6 µs appliqués à
+la porteuse modulée valent 238° à 4,43 MHz.
+
+**La commutation des têtes.** Les deux têtes du tambour se relaient une fois
+par trame, quelques lignes avant la fin de l'image active. Le relais n'est pas
+instantané : ces lignes-là sont désynchronisées et bruitées. C'est la bande de
+désordre en bas d'une cassette — que les téléviseurs masquaient en surbalayant,
+et que les écrans plats d'aujourd'hui exposent sans pitié.
+
+**Les pertes de signal.** L'oxyde manque par endroits, la tête ne lit rien.
+Le magnétoscope comble avec la ligne précédente — c'est le rôle du
+*dropout compensator* — mais l'escamotage se voit.
+
+### 14.5 Le liseré des contours
+
+Un dernier défaut, moins connu et pourtant omniprésent : le **liseré clair qui
+borde les zones sombres**.
+
+Il vient de la modulation de fréquence. Tout enregistreur à FM relève
+fortement les hautes fréquences avant d'écrire et les rabaisse en lisant, pour
+la même raison qu'au chapitre 13 — le bruit d'un discriminateur croît avec la
+fréquence. Mais le relèvement est violent, une dizaine de décibels, et le
+limiteur qui suit **écrête les crêtes qu'il fabrique** sur les contours francs.
+La désaccentuation restitue alors un signal dont les dépassements ne se
+compensent plus.
+
+Sur un générique blanc sur noir, chaque lettre est bordée d'un halo clair.
+Personne ne l'a jamais demandé ; tout le monde l'a vu.
+
+### 14.6 Ce qui est simulé littéralement, et ce qui l'est par son effet
+
+La règle du projet vaut ici comme ailleurs : ce qui n'est pas calculé doit être
+dit.
+
+**La transposition de la chrominance est faite pour de bon.** Il le fallait :
+la perte de résolution et les erreurs de phase en sortent, et aucune des deux
+ne se peint honnêtement.
+
+**La modulation de fréquence de la luminance ne l'est pas.** Sa porteuse monte
+à 4,8 MHz et ses bandes latérales dépasseraient Nyquist sur la grille du
+simulateur — on mesurerait surtout du repliement. On en retient les trois
+effets réels et mesurables : la limitation de bande, la préaccentuation avec
+son dépassement, et le bruit qu'elle façonne. Le bruit est d'ailleurs ajouté
+**avant** la désaccentuation, et non sur l'image finie : ajouté après il serait
+blanc, et le grain d'une cassette ne l'est pas.
+
+> **Dans le code** — `tvcolor/vhs.py`, inséré entre le canal et le décodeur
+> dans `pipeline.encoder_decoder`. La place n'est pas arbitraire : on
+> enregistre ce qui sort de l'antenne, et l'on rebranche la cassette sur la
+> prise du téléviseur. Le magnétoscope hérite donc du bruit du canal et y
+> ajoute le sien.
+
+> **Vérifié par** — `tests/test_vhs.py`. Trois contresens physiques ont été
+> trouvés par la mesure pendant l'écriture de ce module, et chacun y a laissé
+> le test qui l'aurait attrapé.
+
+### 14.7 Tous les chiffres, et d'où ils viennent
+
+Aucune des valeurs qui suivent n'a été réglée à l'œil. Chacune se déduit soit
+d'une spécification du format, soit d'une mesure faite sur la simulation. C'est
+le seul moyen d'éviter le piège de ce genre d'exercice : produire quelque chose
+de spectaculaire qui ne ressemble à rien de réel.
+
+#### Les constantes du format
+
+| grandeur | 625 lignes | 525 lignes | d'où elle vient |
+|---|---|---|---|
+| porteuse de chrominance transposée | 626 953 Hz | 629 371 Hz | $40{,}125\,f_H$ et $40\,f_H$ |
+| porteuse de luminance, pointe de synchro | 3,8 MHz | 3,4 MHz | norme VHS |
+| porteuse de luminance, blanc crête | 4,8 MHz | 4,4 MHz | norme VHS |
+| retard de la voie couleur | 0,6 µs | 0,6 µs | mesuré sur matériel d'époque |
+
+Le quart de multiple de la porteuse transposée joue exactement le rôle du
+demi-multiple du chapitre 5 : il fait que le motif résiduel s'inverse d'une
+ligne à la suivante au lieu de s'y superposer, et devient donc bien moins
+visible.
+
+#### Les bandes passantes, et la définition qui en découle
+
+$$N_{\text{lignes}} = 2 \times \big(B \times T_{\text{active}}\big) \times \frac{3}{4}$$
+
+La convention est celle des constructeurs : $N$ lignes signifient $N/2$
+alternances sur une largeur égale à la **hauteur** de l'image, soit en 4:3
+$(N/2)\cdot(4/3)$ alternances par largeur. Avec $T_{\text{active}} = 51{,}95$ µs :
+
+| | bande luma | bande chroma | déf. luma | déf. chroma | rapport |
+|---|---|---|---|---|---|
+| signal reçu | 5,0 MHz | 1,3 MHz | 390 | 101 | 3,9 |
+| **VHS SP** | 3,0 MHz | 0,40 MHz | 234 | **31** | **7,5** |
+| VHS LP | 2,6 MHz | 0,35 MHz | 203 | 27 | 7,4 |
+| VHS EP | 2,0 MHz | 0,29 MHz | 156 | 23 | 6,9 |
+
+Le rapport de la dernière colonne est la caractéristique du format : **la
+couleur du VHS est huit fois moins fine que sa luminance**, quand elle ne l'est
+que quatre fois à l'antenne.
+
+#### Les générations et l'usure
+
+$$B_{\text{effective}} = B_0 \times 0{,}93^{\,g-1} \times (1 - 0{,}12\,u)$$
+
+où $g$ est le numéro de génération et $u$ l'usure. Une racine par génération
+plutôt qu'un produit brutal : deux filtres identiques mis en cascade ne
+divisent pas la bande par deux, ils resserrent le flanc. Une troisième copie
+d'une bande fatiguée tombe ainsi à 1,7 MHz de luminance et 245 kHz de couleur —
+19 lignes de définition chromatique, où l'on ne distingue plus qu'un aplat par
+huitième d'écran.
+
+#### Les pertes de signal
+
+C'est ici que le réglage à l'œil se paie, et l'on n'y a pas coupé.
+
+Une bande VHS **neuve** est spécifiée à **dix ou vingt pertes par minute** —
+soit une image sur trois cents. Une bande ordinaire en montre quelques-unes par
+seconde. Une bande vraiment fatiguée, quelques-unes par image. La première
+version du simulateur en produisait **cinq cents par seconde** au réglage par
+défaut : mille cinq cents fois la spécification. Le résultat était spectaculaire
+et faux ; personne n'a jamais vu une cassette faire cela.
+
+L'échelle retenue est quadratique, pour que le bas du curseur reste discret et
+le haut spectaculaire :
+
+$$N_{\text{pertes/image}} = 3 \, a^2 \, (0{,}2 + 0{,}8\,u)$$
+
+| réglage | par image | par seconde |
+|---|---|---|
+| défaut ($a = 0{,}25$, $u = 0{,}15$) | 0,06 | 1,5 |
+| bande correcte ($0{,}4$ / $0{,}3$) | 0,21 | 5,3 |
+| bande fatiguée ($0{,}7$ / $0{,}7$) | 1,12 | 27,9 |
+| tout à fond | 3,00 | 75,0 |
+
+#### La gigue de défilement
+
+$$\delta = 0{,}30\ \mu\text{s} \times g \times (0{,}4 + 0{,}6\,u)
+  \times \big(1 + 3 e^{-n/10}\big)$$
+
+Le dernier facteur est le **drapeau** : les deux têtes du tambour se relaient
+juste avant la fin de la trame, et au début de la suivante l'asservissement
+n'est pas encore stabilisé. Les premières lignes sont donc franchement
+décalées, et le bord supérieur de l'image se tord. C'est cette signature-là
+qu'on reconnaît instantanément — elle permet de garder le reste de l'image très
+calme, comme l'était un magnétoscope correct.
+
+| réglage | milieu d'image | haut d'image |
+|---|---|---|
+| défaut | 0,9 échantillon | 3,7 |
+| moyen | 2,0 | 8,2 |
+| tout à fond | 5,3 | 21,3 |
+
+Un échantillon vaut $1/921$ de ligne, soit 0,78 pixel sur une image de 720
+points de large. Le réglage par défaut produit donc une ondulation inférieure
+au pixel au milieu de l'image, et de trois pixels en haut.
+
+#### Le bruit
+
+| usure | luminance | chrominance |
+|---|---|---|
+| 0 (neuve) | 0,31 | 0,51 |
+| 0,15 (défaut) | 0,42 | 0,70 |
+| 0,50 | 0,69 | 1,15 |
+| 1 (fatiguée) | 1,07 | 1,78 |
+
+en niveaux sur 255. Le bruit de luminance est ajouté **avant** la
+désaccentuation, et non sur l'image finie : ajouté après il serait blanc, et le
+grain d'une cassette ne l'est pas.
+
+#### Ce que tout cela coûte, mesuré
+
+| | ΔE\*ab moyen | erreur de teinte |
+|---|---|---|
+| direct | 2,5 | +0,1° |
+| VHS SP, réglages par défaut | 13,3 | +1,3° |
+| EP, bande usée, 3ᵉ copie | 35,7 | −0,3° |
+
+L'erreur de teinte reste nulle dans tous les cas, et c'est le contrôle le plus
+important de ce chapitre : une cassette dégrade la couleur, elle ne la déplace
+pas.
+
+---
+
+### 14.8 Le même magnétoscope, sur carte graphique
+
+Le portage en GLSL suit la méthode du chapitre 12, et il a buté sur deux
+choses que la version numpy ne pouvait pas rencontrer.
+
+**Le filtre le plus étroit du projet.** L'enveloppe de chrominance tient dans
+400 kHz sur une grille échantillonnée à 17,7 MHz : une coupure à 2,3 % de la
+fréquence d'échantillonnage. Or la largeur de transition d'un noyau de $N$
+coefficients vaut grossièrement $f_e/N$. À vingt et un coefficients — la
+longueur de tous les autres filtres du lecteur — la transition mesure 844 kHz
+et le « passe-bas à 400 kHz » n'existe tout simplement pas : la luminance fuit
+massivement dans la couleur. Les noyaux du magnétoscope sont donc de 61 à 141
+coefficients, les plus longs du projet.
+
+Le défaut avait ceci de retors qu'il restait **invisible tant que la bande ne
+bougeait pas**. La fuite, remodulée à la phase d'où elle venait, se réinsérait
+exactement où elle était et ne coûtait rien. Dès qu'on ajoute la gigue, elle
+est lue à une position et réinjectée à une autre : elle cesse de se compenser.
+
+**Le décalage doit tomber sur un échantillon entier.** La texture du composite
+est filtrée au plus proche — un signal échantillonné à quatre points par cycle
+de sous-porteuse ne supporte pas l'interpolation linéaire, qui en modulerait
+l'amplitude. Une lecture à une position fractionnaire retombe donc sur le texel
+voisin, tandis que la phase de démodulation, elle, était calculée sur la
+position exacte demandée. Les deux ne désignaient plus le même échantillon :
+
+$$	ext{erreur de teinte} = 360° 	imes rac{f_{sc}}{f_e} 	imes \delta
+  = 90° 	imes \delta$$
+
+Un demi-échantillon d'écart vaut donc 45°, et la partie fractionnaire du
+décalage changeant à chaque ligne, l'image se rayait de bandes horizontales aux
+couleurs fausses. En arrondissant le décalage à l'échantillon, la lecture et la
+phase désignent le même point. On y perd la finesse de l'ondulation — un
+échantillon, soit un neuf-cent-vingtième de ligne — ce qui est de toute façon
+plus fin que ce qu'un écran saura montrer.
+
+**Un troisième piège : le générateur pseudo-aléatoire n'a pas la résolution.**
+
+Les pertes de signal se testent, dans le shader, contre une probabilité. Avec
+13 824 segments par image et 0,06 perte attendue, cette probabilité vaut
+$4 \cdot 10^{-6}$. Or aucun générateur en flottants ne sait descendre là.
+
+La raison n'est pas le sinus du classique `fract(sin(x) · 43758)`, contrairement
+à ce qu'on croit souvent : c'est la **partie fractionnaire**. La résolution de
+$	ext{fract}(y)$ vaut $y \cdot 2^{-24}$ — appliquée à un nombre de l'ordre de
+43 000, elle plafonne à 0,0026 ; même sur un mélangeur soigné où le dernier
+calcul reste de l'ordre de $10^4$, elle reste à $6 \cdot 10^{-4}$. Comparer
+$4 \cdot 10^{-6}$ à un tirage qui ne sait produire que des multiples de
+$6 \cdot 10^{-4}$ ne sélectionne plus une probabilité : le compte cessait
+d'obéir au réglage, et l'image se retrouvait criblée de **six cents fois trop**
+de pertes.
+
+On renverse donc la question. Plutôt que « ce segment est-il perdu ? », on
+demande « où sont les pertes de cette image ? » : quatre candidats, chacun tiré
+avec une probabilité de l'ordre du dixième, et dont on tire ensuite la ligne et
+le segment. Tous les seuils restent alors dans la plage où les flottants sont
+fiables. Vérifié en instrumentant le shader pour qu'il rende son propre masque
+de pertes : le compte obéit désormais au réglage sur deux décades.
+
+**Un quatrième piège, et le plus sournois.** Les défauts d'une cassette
+doivent changer à chaque image : une bande défile, le morceau de ruban sous la
+tête n'est jamais le même. La passe s'appuyait pour cela sur l'avance de phase
+de sous-porteuse d'une image à l'autre — la grandeur qui fait déjà ramper les
+points. Or elle ne prend que **deux valeurs en NTSC, quatre en PAL, et une
+seule en SECAM**, où la sous-porteuse est un multiple entier de la fréquence
+ligne. Les défauts de la cassette restaient donc figés d'un bout à l'autre du
+film, et en SECAM ils ne bougeaient jamais.
+
+C'est le numéro d'image qui alimente désormais la graine. Et le comportement
+qui en découle est juste jusqu'au bout : sur un arrêt sur image, le compteur
+cesse d'avancer et le motif se fige — ce que fait un magnétoscope qui relit la
+même piste en boucle.
+
+**Le coût.** Mesuré par requête `GL_TIME_ELAPSED`, sur une RTX 3090 :
+
+| | travail GPU |
+|---|---|
+| sans cassette | 0,20 ms |
+| VHS SP | 0,36 ms |
+| VHS EP | 0,45 ms |
+
+Le magnétoscope double presque le temps de rendu — c'est la rançon de ses
+noyaux longs — et l'on reste à plus de deux mille images par seconde.
+
+> **Dans le code** — `shaders/vhs.glsl`, une passe entre le codage et le
+> décodage. Le nombre de générations décide du nombre de passes : une copie de
+> copie repasse réellement par toute la chaîne.
+
+---
+
+## 15. Annexes
 
 ### A. Tableau des constantes
 
@@ -2082,6 +2492,7 @@ tvcolor/          la bibliothèque de simulation (numpy pur, sans Qt)
   mires.py          les mires de test
   mesures.py        vectorscope, spectres, ΔE, résolutions
   son.py            la voie son : porteuse, modulation, canal (chapitre 13)
+  vhs.py            le magnétoscope : color-under, gigue (chapitre 14)
 
 shaders/          la même chaîne en GLSL (chapitre 12)
   sommet.vert       le triangle plein écran, sans tampon de sommets
@@ -2092,6 +2503,7 @@ shaders/          la même chaîne en GLSL (chapitre 12)
   scan.frag         somme préfixe — l'intégrale de phase du SECAM
   bloom.glsl        halation et épanouissement du faisceau
   presentation.frag courbure, réponse du tube, lignes de balayage
+  vhs.glsl          le magnétoscope, en une passe (chapitre 14)
 
 lecteur/          le lecteur vidéo temps réel (PyQt5 + OpenGL)
   normes_gl.py      les normes traduites en noyaux et en uniformes
@@ -2102,7 +2514,7 @@ lecteur/          le lecteur vidéo temps réel (PyQt5 + OpenGL)
   app.py            la fenêtre et ses réglages, en onglets Image et Son
 
 gui/              l'interface PyQt5 d'analyse d'une image fixe
-tests/            115 tests, dont ceux cités tout au long de ce cours
+tests/            152 tests, dont ceux cités tout au long de ce cours
 docs/             ce document et son générateur de figures
 ```
 

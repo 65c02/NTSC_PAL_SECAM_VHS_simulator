@@ -1051,6 +1051,76 @@ def figure_22_son(dossier: Path) -> Path:
 
 
 # ===========================================================================
+# 10. La cassette
+# ===========================================================================
+
+@figure("23", "Ce qu'une cassette VHS fait au signal")
+def figure_23_vhs(dossier: Path) -> Path:
+    """Le color-under, vu dans l'image et dans la forme d'onde.
+
+    Le volet du bas est le plus instructif : c'est le signal composite d'une
+    même ligne, avant et après la cassette. On y voit d'un coup ce que le
+    magnétoscope a fait — les hautes fréquences de luminance rabotées, et
+    surtout la sous-porteuse couleur réduite à une ondulation molle là où elle
+    était une sinusoïde franche.
+    """
+    from tvcolor import vhs
+
+    mire = mires.barres_couleur(288, 384)
+    reglages = [
+        ("Direct", None),
+        ("VHS SP", vhs.ParametresVHS(actif=True, usure=0.1, gigue=0.35)),
+        ("VHS EP, bande usée", vhs.ParametresVHS(
+            actif=True, vitesse="EP", generation=2, usure=0.75, gigue=0.7)),
+    ]
+
+    fig = plt.figure(figsize=(12.0, 6.6))
+    grille = fig.add_gridspec(2, 3, height_ratios=[3, 2], hspace=0.32)
+
+    resultats = []
+    for rang, (titre, reglage) in enumerate(reglages):
+        params = Parametres(norme="PAL-BG", taille_sortie=mire.shape[:2])
+        if reglage is not None:
+            params.vhs = reglage
+        resultat = encoder_decoder(mire, params)
+        resultats.append(resultat)
+        bilan = mesures.evaluer(resultat)
+        _image(
+            fig.add_subplot(grille[0, rang]),
+            resultat.finale,
+            f"{titre}\nΔE moyen {bilan.delta_e_moyen:.1f}",
+        )
+
+    # La forme d'onde d'une même ligne, avant et après la cassette.
+    ax = fig.add_subplot(grille[1, :])
+    norme = obtenir_norme("PAL-BG")
+    ligne = resultats[0].composite_recu.shape[0] // 2
+    debut = norme.marge_suppression
+    fin = debut + norme.echantillons_par_ligne
+    temps = np.arange(fin - debut) / norme.f_echantillonnage * 1e6
+
+    for resultat, (titre, _), couleur, epaisseur in zip(
+        resultats, reglages, (GRIS, BLEU, ROUGE), (1.6, 1.2, 1.2)
+    ):
+        ax.plot(temps, resultat.composite_recu[ligne, debut:fin],
+                color=couleur, lw=epaisseur, label=titre)
+
+    # On se limite à UNE TRANSITION, et c'est délibéré. Au milieu d'une barre
+    # les trois courbes se superposent presque : la sous-porteuse y est stable
+    # et la cassette la restitue. C'est au passage d'une couleur à l'autre que
+    # tout se joue — là où la bande passante décide.
+    ax.set_xlim(11.5, 14.5)
+    ax.set_xlabel("temps dans la ligne (µs)")
+    ax.set_ylabel("niveau composite")
+    ax.set_title(
+        "Le signal composite d'une même ligne — la sous-porteuse couleur "
+        "s'affaisse, la luminance s'arrondit"
+    )
+    ax.legend(loc="upper right")
+    return _enregistrer(fig, dossier, "23", "vhs")
+
+
+# ===========================================================================
 
 def principal(argv=None) -> int:
     analyseur = argparse.ArgumentParser(description=__doc__)

@@ -10,12 +10,13 @@ ne sont **jamais dessinés**. Ils émergent du calcul. C'est la seule façon
 d'être sûr que ce qu'on regarde est vrai.
 
 📘 **Le cours complet est dans [`docs/cours.md`](docs/cours.md)** — la théorie,
-les mathématiques et les dérivations, illustrées par vingt-deux figures
+les mathématiques et les dérivations, illustrées par vingt-trois figures
 produites par le simulateur lui-même. Le **chapitre 12** est consacré aux
 shaders — comment la même chaîne a été portée sur carte graphique, ce qu'un
 fragment shader interdit, et ce que le portage a coûté en fidélité — et le
 **chapitre 13** au son, qui ne voyageait pas dans le signal vidéo mais sur sa
-propre porteuse.
+propre porteuse. Le **chapitre 14** ajoute le magnétoscope, qui ne se contentait
+pas de transporter le signal : il le démontait.
 
 ---
 
@@ -58,10 +59,53 @@ pâlit, le SECAM ne bouge pas.
   sous-porteuse, primaires, gamma, piédestal, entrelacement.
 - **Neuf mires** conçues pour révéler chacune un artefact, dont un piège à
   cross-color et un piège à dot crawl.
+- **Un magnétoscope VHS**, entre l'antenne et le téléviseur — sa vraie place.
 - **Comparaison des trois normes** dans des conditions identiques.
+
+Les réglages sont en quatre onglets — **Image**, **Bruit**, **Magnétoscope**,
+**Son**. Le bruit a le sien pour une raison précise : il n'appartient pas à
+l'image. Il y a un canal, une densité de bruit, et deux porteuses qui y
+puisent.
 
 Sept normes sont disponibles : NTSC-M, NTSC-J, NTSC 1953, PAL-B/G, PAL-I,
 SECAM-L et SECAM-D/K.
+
+### La cassette VHS
+
+Un magnétoscope n'enregistre pas le composite tel quel : il le **démonte**. La
+bande ne tient pas cinq mégahertz, et le contact tête/bande fluctue trop pour
+qu'un enregistrement en amplitude soit envisageable. D'où le procédé
+*color-under* : séparer Y et C, moduler la luminance en fréquence, et
+**transposer la chrominance sous elle**, à 627 kHz.
+
+Le prix se lit dans un seul chiffre. La chrominance transposée ne dispose plus
+que de 400 kHz contre 1,3 MHz à l'antenne, et sa définition horizontale tombe à
+**une trentaine de lignes** quand la luminance en garde 240 — un facteur huit.
+C'est ce qui trahit une cassette même quand tout le reste est propre.
+
+| | bande luma | bande chroma | définition chroma |
+|---|---|---|---|
+| direct | 5,0 MHz | 1,3 MHz | 100 lignes |
+| VHS SP | 3,0 MHz | 0,40 MHz | 31 lignes |
+| VHS LP | 2,6 MHz | 0,35 MHz | 27 lignes |
+| VHS EP | 2,0 MHz | 0,29 MHz | 22 lignes |
+
+S'y ajoutent la gigue de défilement — les verticales ondulent —, la commutation
+des têtes en bas de l'image, les pertes de signal, le liseré clair au bord des
+contours, et le cumul des générations de copie.
+
+**Tous les taux sont calés sur des chiffres réels**, jamais réglés à l'œil.
+Une bande VHS neuve est spécifiée à dix ou vingt pertes de signal par *minute* ;
+le réglage par défaut en produit 1,5 par seconde, et le maximum 75. La gigue
+vaut 0,9 échantillon au milieu de l'image — moins d'un pixel — et quatre fois
+plus sur les premières lignes, là où l'asservissement du tambour n'est pas
+encore stabilisé : c'est le « drapeau », la signature qu'on reconnaît
+instantanément. Le §14.7 du cours donne toutes les formules et leur origine.
+
+La gigue ne fait **pas** tourner la teinte, et c'est le point qui a coûté deux
+fautes : un magnétoscope régénère sa porteuse de relecture à partir du signal
+lu, si bien que l'erreur de base de temps s'annule dans la démodulation. Le
+décalage porte donc sur l'enveloppe de la chrominance, jamais sur sa porteuse.
 
 ---
 
@@ -77,7 +121,15 @@ norme **sans interrompre la lecture** · `←` `→` reculer ou avancer de cinq
 secondes · `M` couper le son · `F11` plein écran, `Échap` pour en sortir ·
 `Ctrl+E` exporter en MP4. Le glisser-déposer fonctionne aussi dans la fenêtre.
 
-Les réglages sont en deux onglets, **Image** et **Son**.
+Les réglages sont en quatre onglets — **Image**, **Bruit**, **Magnétoscope**,
+**Son**. Le bruit a le sien parce qu'il n'appartient à aucun des deux : un seul
+canal, une seule densité de bruit, et l'onglet montre en clair ce que la voie
+son en récolte.
+
+Le magnétoscope tourne lui aussi sur la carte graphique — `shaders/vhs.glsl`,
+une passe entre le codage et le décodage — et coûte 0,16 ms de plus par image :
+0,36 ms au lieu de 0,20 en mode SP, soit encore près de trois mille images par
+seconde.
 
 Le plein écran masque toute l'interface — barre d'outils, panneau de réglages,
 transport et barre d'état : il ne reste que la dalle sur fond noir.
@@ -193,6 +245,13 @@ La chaîne est complète : limitation à 15 kHz, préaccentuation, limiteur,
 modulation, **bruit de canal de la même densité que celui de l'image**, filtre
 à fréquence intermédiaire, démodulation, désaccentuation. Le souffle, le seuil
 FM et ses claquements, le ronflement intercarrier — rien n'est peint.
+
+Deux gains, et leur place dans la chaîne change tout. Le **niveau d'entrée du
+modulateur** est celui du studio : placé avant la modulation, il décide de
+l'excursion réellement employée, donc du rapport signal/bruit. Un décibel de
+gain en rend un — mesuré sur une source gravée bas dans un canal à 25 dB :
+33 dB de signal/bruit sans gain, 45 avec douze décibels, 51 avec dix-huit.
+C'est lui qu'il faut pousser quand le fichier est faible.
 
 Le **gain de sortie** de l'onglet Son est le bouton de volume du poste : il
 agit après la démodulation, amplifie donc le bruit autant que le signal, et ne
@@ -411,8 +470,8 @@ lecteur/          le lecteur vidéo temps réel
   app.py            la fenêtre
 
 gui/              le banc de mesure PyQt5
-docs/             le cours, ses vingt-deux figures, et leurs générateurs
-tests/            115 tests
+docs/             le cours, ses vingt-trois figures, et leurs générateurs
+tests/            152 tests
 ```
 
 ---
