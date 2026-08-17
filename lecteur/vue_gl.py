@@ -39,11 +39,13 @@ from .gl_util import (
     assembler_simple,
     lire_source,
 )
-from .normes_gl import ReglageGL, reglage, sigma_du_tube
+from tvcolor.vhs import RETARD_CHROMA as RETARD_CHROMA_VHS
+
+from .normes_gl import ReglageGL, longueur_vhs, noyaux_vhs, reglage, sigma_du_tube
 
 FICHIER_NORME = {"NTSC": "ntsc.glsl", "PAL": "pal.glsl", "SECAM": "secam.glsl"}
 
-UNITE_SOURCE, UNITE_COMPOSITE, UNITE_PREPARE, UNITE_SCAN = 0, 1, 2, 3
+UNITE_SOURCE, UNITE_COMPOSITE, UNITE_PREPARE, UNITE_SCAN, UNITE_VHS = 0, 1, 2, 3, 4
 
 
 @dataclass
@@ -99,8 +101,37 @@ class ParametresRendu:
     sous-porteuse), `double`, `triple`, ou `ecran` pour caler la grille sur la
     largeur réellement affichée."""
 
+    vhs_actif: bool = False
+    vhs_vitesse: str = "SP"
+    vhs_generation: int = 1
+    vhs_usure: float = 0.15
+    vhs_gigue: float = 0.35
+    vhs_abandons: float = 0.25
+    vhs_commutation: bool = True
+    vhs_depassement: float = 0.8
+    """Passage par un magnétoscope, entre le canal et le téléviseur.
+
+    Les mêmes réglages que `tvcolor.vhs.ParametresVHS`, à plat pour rester
+    dans l'esprit de cette dataclasse — un seul objet que l'interface remplit
+    et que le moteur consomme."""
+
     animer: bool = True
     conserver_proportions: bool = True
+
+    def bandes_vhs(self) -> tuple[float, float]:
+        """Bandes luma et chroma de la cassette, usure et générations comprises.
+
+        Déléguée à `tvcolor.vhs` : il n'y a pas deux tables de constantes dans
+        ce projet, et une correction faite pour le simulateur de référence doit
+        se propager ici sans qu'on ait à y penser.
+        """
+        from tvcolor.vhs import ParametresVHS
+
+        return ParametresVHS(
+            vitesse=self.vhs_vitesse,
+            generation=self.vhs_generation,
+            usure=self.vhs_usure,
+        ).bandes()
 
     def largeur_grille(self, norme, largeur_affichee: int) -> int:
         """Largeur de la grille d'échantillonnage, en points par ligne active."""
@@ -234,8 +265,25 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
                 self._sommet, source, f"{self._reglage.norme.code}/{nom}"
             )
 
+        # Le magnétoscope partage l'entête commun : il a besoin de `phase()`,
+        # sans laquelle il ne saurait ni descendre ni remonter la chrominance.
+        self._n_vhs = longueur_vhs(
+            self.parametres.qualite,
+            self._reglage.largeur,
+            self._reglage.norme.echantillons_par_ligne,
+        )
+        self._programmes["vhs"] = Programme(
+            self._sommet, assembler("vhs.glsl", {**defines, "N_VHS": self._n_vhs}),
+            f"{self._reglage.norme.code}/vhs",
+        )
+
         largeur, hauteur = self._reglage.largeur, self._reglage.hauteur
         self._cibles["composite"] = Cible(largeur, hauteur, GL.GL_R16F)
+        # Deux tampons pour la cassette : une génération de copie repasse par
+        # toute la chaîne, et l'on ne peut pas lire et écrire la même texture
+        # dans une même passe.
+        self._cibles["vhs_a"] = Cible(largeur, hauteur, GL.GL_R16F)
+        self._cibles["vhs_b"] = Cible(largeur, hauteur, GL.GL_R16F)
         self._cibles["resultat"] = Cible(largeur, hauteur, GL.GL_RGBA8)
 
         # Le halo travaille au quart de la résolution. Il est flou par
@@ -256,6 +304,7 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             programme.definir("u_composite", UNITE_COMPOSITE)
             programme.definir("u_prepare", UNITE_PREPARE)
             programme.definir("u_scan", UNITE_SCAN)
+            programme.definir("u_vhs_entree", UNITE_VHS)
 
         self._programme_scan.utiliser()
         self._programme_scan.definir("u_entree", 0)
@@ -430,6 +479,8 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
                 self._passe_preparation()
                 self._passes_scan()
             self._passe_codage()
+            if self.parametres.vhs_actif:
+                self._passes_vhs()
             self._passe_decodage()
             if self._capture_demandee:
                 self._capturer()
@@ -530,6 +581,8 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._texture_scan = texture_source
 
     def _passe_codage(self) -> None:
+        # Sans cassette, c'est la sortie du codeur que le décodeur lit.
+        self._texture_composite = self._cibles["composite"]
         cible = self._cibles["composite"]
         cible.activer()
         programme = self._programmes["codage"]
@@ -542,13 +595,85 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             GL.glBindTexture(GL.GL_TEXTURE_2D, self._texture_scan)
         self._quad.dessiner()
 
+    def _passes_vhs(self) -> None:
+        """Une passe par génération de copie.
+
+        Une copie de copie repasse réellement par toute la chaîne — c'est ce
+        qui rendait les cassettes échangées entre amis si reconnaissables — et
+        l'on enchaîne donc autant de passes que de générations, en alternant
+        entre deux tampons.
+        """
+        p = self.parametres
+        reglage = self._reglage
+        bande_luma, bande_chroma = p.bandes_vhs()
+
+        programme = self._programmes["vhs"]
+        programme.utiliser()
+        self._uniformes_communs(programme)
+
+        noyaux = noyaux_vhs(self._n_vhs, reglage.f_ech, bande_luma, bande_chroma)
+        programme.definir("u_vhs_noyau_luma", noyaux["luma"])
+        programme.definir("u_vhs_noyau_douce", noyaux["douce"])
+        programme.definir("u_vhs_noyau_chroma", noyaux["chroma"])
+
+        usure = float(np.clip(p.vhs_usure, 0.0, 1.0))
+        # Arrondi à l'échantillon, pour la même raison que la gigue : la
+        # lecture et la phase de démodulation doivent désigner le même point.
+        programme.definir(
+            "u_vhs_retard", float(round(RETARD_CHROMA_VHS * reglage.f_ech))
+        )
+        programme.definir(
+            "u_vhs_gigue",
+            float(p.vhs_gigue) * 0.30e-6 * (0.4 + 0.6 * usure) * reglage.f_ech,
+        )
+        programme.definir("u_vhs_depassement", float(p.vhs_depassement))
+        programme.definir("u_vhs_bruit_luma", 0.005 * (0.4 + usure))
+        programme.definir("u_vhs_bruit_chroma", 0.004 * (0.4 + usure))
+
+        # NOMBRE de pertes attendu par image — et non une probabilité par
+        # segment. Le shader tire les positions plutôt que de tester chacune
+        # d'elles ; c'est ce qui lui permet de descendre à des taux réalistes,
+        # une bande VHS neuve étant spécifiée à dix ou vingt pertes par MINUTE.
+        #
+        # L'échelle est quadratique : le bas du curseur doit rester discret et
+        # le haut spectaculaire.
+        programme.definir(
+            "u_vhs_abandons",
+            3.0 * float(p.vhs_abandons) ** 2 * (0.2 + 0.8 * usure),
+        )
+        programme.definir("u_vhs_commutation", 6.0 if p.vhs_commutation else 0.0)
+
+        source = self._cibles["composite"]
+        a, b = self._cibles["vhs_a"], self._cibles["vhs_b"]
+        destination = a
+
+        for generation in range(max(1, int(p.vhs_generation))):
+            destination.activer()
+            # Le numéro d'image entre dans la graine : sans lui, le même
+            # morceau de bande repasserait à chaque image et les défauts
+            # resteraient figés d'un bout à l'autre du film. En pause, en
+            # revanche, le compteur ne bouge plus et le motif se fige — ce
+            # qui est exactement ce que fait un magnétoscope sur arrêt sur
+            # image, où la même piste est relue en boucle.
+            programme.definir(
+                "u_vhs_graine",
+                float(17.0 * generation + 3.0
+                      + (self._numero_image % 4096) * 1.6180339887),
+            )
+            source.lier(UNITE_VHS)
+            self._quad.dessiner()
+            source = destination
+            destination = b if destination is a else a
+
+        self._texture_composite = source
+
     def _passe_decodage(self) -> None:
         cible = self._cibles["resultat"]
         cible.activer()
         programme = self._programmes["decodage"]
         programme.utiliser()
         self._uniformes_communs(programme)
-        self._cibles["composite"].lier(UNITE_COMPOSITE)
+        self._texture_composite.lier(UNITE_COMPOSITE)
         self._quad.dessiner()
 
     def _passes_halo(self) -> None:

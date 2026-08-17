@@ -290,3 +290,156 @@ def test_le_peigne_et_le_rejecteur_ne_donnent_pas_la_meme_image(vue):
     peigne = rendre(vue, mire, norme="NTSC-M", separateur=0)
     notch = rendre(vue, mire, norme="NTSC-M", separateur=1)
     assert np.abs(peigne - notch).mean() > 1e-3
+
+
+# ---------------------------------------------------------------------------
+# Le magnétoscope
+# ---------------------------------------------------------------------------
+
+def test_la_cassette_degrade_la_couleur_sans_toucher_a_la_teinte(vue):
+    """Le color-under, en une mesure.
+
+    La cassette doit adoucir franchement les transitions de COULEUR — c'est sa
+    signature — et ne pas déplacer la teinte des aplats. Le second point est le
+    plus délicat : la porteuse de relecture d'un magnétoscope est régénérée à
+    partir du signal lu, si bien que ni le retard de la voie chrominance ni
+    l'erreur de base de temps ne doivent faire tourner les couleurs.
+    """
+    mire = mires.barres_couleur(288, 384)
+    propre = rendre(vue, mire, norme="PAL-BG", separateur=1)
+    cassette = rendre(
+        vue, mire, norme="PAL-BG", separateur=1,
+        vhs_actif=True, vhs_gigue=0.0, vhs_usure=0.0, vhs_abandons=0.0,
+        vhs_commutation=False, vhs_depassement=0.0,
+    )
+
+    def detail_couleur(image):
+        """Énergie de chrominance dans le haut du spectre horizontal."""
+        difference = image[..., 0] - image[..., 2]
+        profil = difference.mean(axis=0)
+        spectre = np.abs(np.fft.rfft(profil - profil.mean()))
+        frequences = np.fft.rfftfreq(profil.size)
+        return float(np.sqrt((spectre[frequences > 0.2] ** 2).sum()))
+
+    assert detail_couleur(cassette) < 0.7 * detail_couleur(propre)
+
+    # La teinte des aplats ne bouge pas. On la mesure sur une barre SATURÉE et
+    # au milieu de celle-ci : sur du blanc, l'angle de chrominance n'a aucun
+    # sens — deux millièmes d'écart le font sauter d'un quadrant — et sur un
+    # bord, c'est la transition qu'on mesurerait. La sortie a la géométrie de
+    # la norme, 921 points de large, et non celle de la mire.
+    def teinte(image):
+        largeur = image.shape[1]
+        barre = slice(int(largeur * 4.2 / 8), int(largeur * 4.8 / 8))   # magenta
+        bloc = image[image.shape[0] // 3 : 2 * image.shape[0] // 3, barre]
+        rouge, vert, bleu = bloc[..., 0].mean(), bloc[..., 1].mean(), bloc[..., 2].mean()
+        assert max(rouge, vert, bleu) - min(rouge, vert, bleu) > 0.2, "barre trop pâle"
+        return np.degrees(np.arctan2(0.877 * (rouge - vert), 0.492 * (bleu - vert)))
+
+    assert abs(teinte(cassette) - teinte(propre)) < 20.0
+
+
+def test_la_gigue_ne_raye_pas_l_image(vue):
+    """Elle doit faire onduler, pas déchirer.
+
+    Deux fautes se cachaient ici, et aucune ne se voyait sans la gigue.
+    D'abord un bruit d'ondulation trop rapide — période de quatre lignes — qui
+    décalait différemment les lignes n et n-2 et mettait le filtre en peigne en
+    échec. Ensuite, et surtout, un décalage FRACTIONNAIRE : la texture du
+    composite étant filtrée au plus proche, la lecture retombait sur un texel
+    tandis que la phase de démodulation était calculée sur la position exacte.
+    À quatre points par cycle de sous-porteuse, un demi-échantillon d'écart
+    vaut 45° de teinte — et l'image se rayait de bandes horizontales colorées.
+
+    On mesure donc l'énergie verticale à HAUTE fréquence : une ondulation lente
+    n'en produit presque pas, un rayage en produit énormément.
+    """
+    mire = mires.barres_couleur(288, 384)
+    base = dict(norme="PAL-BG", vhs_actif=True, vhs_usure=0.1, vhs_abandons=0.0,
+                vhs_commutation=False, vhs_depassement=0.0)
+    droit = rendre(vue, mire, vhs_gigue=0.0, **base)
+    ondule = rendre(vue, mire, vhs_gigue=0.6, **base)
+
+    def rayure(image):
+        """Énergie verticale au-dessus du quart de Nyquist, sur une colonne
+        prise au milieu d'un aplat — là où rien ne devrait varier."""
+        colonne = image[:, 120:160].mean(axis=1).mean(axis=1)
+        spectre = np.abs(np.fft.rfft(colonne - colonne.mean()))
+        frequences = np.fft.rfftfreq(colonne.size)
+        return float(np.sqrt((spectre[frequences > 0.25] ** 2).sum()))
+
+    assert rayure(ondule) < 3.0 * rayure(droit) + 0.05
+
+
+def test_le_magnetoscope_coute_peu(vue):
+    """Il double le temps de rendu au plus, et l'on reste très loin du temps réel."""
+    from lecteur.normes_gl import longueur_vhs
+
+    # Les noyaux du magnétoscope sont les plus longs du projet, et il le faut :
+    # 400 kHz sur une grille à 17,7 MHz ne se forment pas en vingt taps.
+    assert longueur_vhs("normale", 921, 921) >= 81
+    assert longueur_vhs("rapide", 921, 921) < longueur_vhs("haute", 921, 921)
+
+
+@pytest.mark.parametrize("norme", NORMES)
+def test_la_cassette_marche_dans_les_trois_normes(vue, norme):
+    sortie = rendre(vue, mires.barres_couleur(288, 384), norme=norme, vhs_actif=True)
+    assert np.isfinite(sortie).all()
+    assert sortie.max() > 0.5, "l'image est noire"
+
+
+def test_les_defauts_de_la_cassette_changent_a_chaque_image(vue):
+    """Une bande défile : le morceau de ruban sous la tête n'est jamais le même.
+
+    Ni la gigue ni les pertes de signal ne doivent donc se répéter d'une image
+    à la suivante. Le défaut trouvé ici était sournois : la passe s'appuyait sur
+    `u_phase_image`, l'avance de phase de sous-porteuse d'une image à l'autre.
+    Or cette grandeur ne prend que deux valeurs en NTSC, quatre en PAL, et **une
+    seule en SECAM** — la sous-porteuse y étant un multiple entier de la
+    fréquence ligne. Les défauts de la cassette restaient donc figés d'un bout à
+    l'autre du film, et en SECAM ils ne bougeaient jamais.
+
+    On teste les trois normes, et le SECAM est celle qui compte.
+    """
+    from lecteur.vue_gl import ParametresRendu
+
+    mire = mires.barres_couleur(288, 384)
+    for norme in ("SECAM-L", "PAL-BG", "NTSC-M"):
+        # Le bruit du canal est éteint : on veut mesurer ce que la cassette
+        # fait varier, pas ce que le canal ajoute.
+        vue.appliquer(ParametresRendu(
+            norme=norme, animer=True, rapport_signal_bruit=None,
+            vhs_actif=True, vhs_gigue=0.6, vhs_abandons=0.5, vhs_usure=0.0,
+        ))
+        images = []
+        for _ in range(3):
+            vue.definir_image((np.clip(mire, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+            rendu = vue.image_rendue()
+            assert rendu is not None
+            images.append(rendu.astype(np.float64))
+
+        for precedente, suivante in zip(images, images[1:]):
+            ecart = float(np.abs(suivante - precedente).mean())
+            assert ecart > 1.0, f"{norme} : les défauts sont figés ({ecart:.3f})"
+
+
+def test_en_arret_sur_image_les_defauts_se_figent(vue):
+    """Le pendant du test précédent, et il est aussi physique que lui.
+
+    Un magnétoscope à l'arrêt relit la même piste en boucle : la gigue et les
+    pertes de signal se figent, et c'est exactement ce qu'on voyait sur un
+    arrêt sur image. Le motif suit donc le compteur d'images, et rien d'autre.
+    """
+    from lecteur.vue_gl import ParametresRendu
+
+    mire = (np.clip(mires.barres_couleur(288, 384), 0.0, 1.0) * 255.0 + 0.5).astype(
+        np.uint8
+    )
+    vue.appliquer(ParametresRendu(
+        norme="SECAM-L", animer=False, rapport_signal_bruit=None,
+        vhs_actif=True, vhs_gigue=0.6, vhs_abandons=0.5, vhs_usure=0.0,
+    ))
+    vue.definir_image(mire)
+    premiere = vue.image_rendue().astype(np.float64)
+    seconde = vue.image_rendue().astype(np.float64)
+    assert np.abs(seconde - premiere).mean() < 0.01

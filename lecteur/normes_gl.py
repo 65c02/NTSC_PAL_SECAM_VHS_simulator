@@ -220,6 +220,58 @@ LARGEUR_TRAP = 0.6e6
 
 
 # ---------------------------------------------------------------------------
+# Le magnétoscope
+# ---------------------------------------------------------------------------
+
+LONGUEURS_VHS = {"rapide": 61, "normale": 101, "haute": 141}
+"""Longueur des noyaux de la passe magnétoscope.
+
+Bien plus grande que celle des autres, et il n'y a pas le choix. Le filtre le
+plus étroit de tout le projet est ici : l'enveloppe de chrominance d'une
+cassette tient dans 400 kHz, sur une grille échantillonnée à 17,7 MHz. Cela
+fait une coupure à 2,3 % de la fréquence d'échantillonnage, quand la largeur de
+transition d'un noyau de N coefficients vaut grossièrement f_ech/N.
+
+À vingt et un coefficients, la transition mesure 844 kHz : le « passe-bas à
+400 kHz » n'existe tout simplement pas, et la luminance fuit massivement dans
+l'enveloppe de couleur.
+
+Le défaut est resté invisible tant que la bande ne bougeait pas — la fuite,
+remodulée à la phase d'où elle venait, se réinsérait exactement où elle était
+et ne coûtait rien. Dès qu'on ajoute la gigue, elle est lue à une position et
+réinjectée à une autre : elle cesse de se compenser, et l'image se raye de
+bandes horizontales colorées. C'est le genre de faute qui ne se voit que dans
+la combinaison de deux réglages."""
+
+
+def longueur_vhs(qualite: str, largeur: int, largeur_normative: int) -> int:
+    """Longueur des noyaux du magnétoscope, ajustée à la finesse de la grille."""
+    base = LONGUEURS_VHS.get(qualite, LONGUEURS_VHS["normale"])
+    return _impair(base * largeur / max(largeur_normative, 1), 241)
+
+
+def noyaux_vhs(n_taps: int, f_ech: float, bande_luma: float,
+               bande_chroma: float) -> dict:
+    """Les trois noyaux dont la passe magnétoscope a besoin.
+
+    * `luma` limite la luminance à ce que la bande sait écrire — trois
+      mégahertz en mode SP. Ce seul filtre sépare aussi la chrominance, qui
+      vit à 4,4 MHz : inutile de séparer d'abord pour filtrer ensuite ;
+    * `douce` est le même filtre, deux fois plus étroit. Sa différence avec le
+      premier donne les hautes fréquences, dont on fabrique le liseré de
+      contour ;
+    * `chroma` limite l'ENVELOPPE de couleur, ramenée en bande de base. Quatre
+      cents kilohertz : c'est toute la place que la porteuse transposée laisse
+      à la couleur, et c'est de là que sort le caractère du format.
+    """
+    return {
+        "luma": noyau_passe_bas(n_taps, bande_luma, f_ech),
+        "douce": noyau_passe_bas(n_taps, 0.45 * bande_luma, f_ech),
+        "chroma": noyau_passe_bas(n_taps, bande_chroma, f_ech),
+    }
+
+
+# ---------------------------------------------------------------------------
 
 @dataclass
 class ReglageGL:
