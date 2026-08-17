@@ -365,3 +365,64 @@ def test_pousser_le_gain_sur_un_signal_deja_fort_fait_saturer():
     )
     assert au_repos.distorsion < 1.0
     assert pousse.distorsion > 10.0
+
+
+def test_le_gain_avant_modulation_ameliore_vraiment_le_rapport_signal_bruit():
+    """La différence entre remonter le niveau à l'émission et à la réception.
+
+    Placé AVANT la modulation, le gain décide de l'excursion réellement
+    employée — donc de la profondeur de modulation, donc du rapport
+    signal/bruit. Un décibel de gain en rend un. C'est pour cela qu'un
+    diffuseur surveille sa modulation, et c'est ce qu'il faut pousser quand la
+    source est gravée bas.
+    """
+    norme = obtenir_norme("PAL-BG")
+
+    def mesurer(db_entree=0.0, db_sortie=0.0):
+        p = son.ParametresSon(
+            rapport_signal_bruit=25.0,
+            gain_entree=10.0 ** (db_entree / 20.0),
+            gain_sortie=10.0 ** (db_sortie / 20.0),
+        )
+        return son.evaluer(norme, TAUX, p, amplitude=0.05).rapport_signal_bruit
+
+    reference = mesurer()
+    for db in (6.0, 12.0, 18.0):
+        assert mesurer(db_entree=db) == pytest.approx(reference + db, abs=1.5), db
+
+
+def test_le_gain_apres_demodulation_n_ameliore_rien():
+    """Le pendant, et c'est lui qui donne son sens au précédent.
+
+    Le bouton de volume d'un poste agit après le démodulateur : il amplifie le
+    bruit autant que le signal. Si ce test échouait, c'est qu'un gain se serait
+    glissé du mauvais côté du démodulateur.
+    """
+    norme = obtenir_norme("PAL-BG")
+
+    def mesurer(db):
+        p = son.ParametresSon(
+            rapport_signal_bruit=25.0, gain_sortie=10.0 ** (db / 20.0)
+        )
+        return son.evaluer(norme, TAUX, p, amplitude=0.05).rapport_signal_bruit
+
+    reference = mesurer(0.0)
+    for db in (6.0, 12.0, 18.0):
+        assert mesurer(db) == pytest.approx(reference, abs=1.5), db
+
+
+def test_surmoduler_finit_par_distordre():
+    """Le limiteur de l'émetteur existe, et il s'entend. Poussé bien au-delà du
+    point où l'excursion est pleine, le gain d'entrée doit fabriquer de la
+    distorsion — c'est ce que fait un émetteur réellement surmodulé."""
+    norme = obtenir_norme("PAL-BG")
+    raisonnable = son.evaluer(
+        norme, TAUX, son.ParametresSon(gain_entree=10.0 ** (12.0 / 20.0)),
+        amplitude=0.05,
+    )
+    excessif = son.evaluer(
+        norme, TAUX, son.ParametresSon(gain_entree=10.0 ** (30.0 / 20.0)),
+        amplitude=0.05,
+    )
+    assert raisonnable.distorsion < 1.0
+    assert excessif.distorsion > 5.0

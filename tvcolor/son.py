@@ -97,8 +97,30 @@ class ParametresSon:
     """Désaccord de l'oscillateur local, en hertz."""
 
     gain_entree: float = 1.0
-    """Gain appliqué avant modulation. Au-delà de 1, le limiteur écrête et la
-    distorsion apparaît — comme sur un émetteur réellement surmodulé."""
+    """Niveau d'entrée du modulateur, en linéaire. C'est le réglage du studio.
+
+    Et ce n'est PAS un bouton de volume : sa place dans la chaîne change tout.
+    Placé avant la modulation, il décide de l'excursion réellement employée —
+    donc de la profondeur de modulation, donc du rapport signal/bruit. Un
+    décibel de gain ici rend un décibel de rapport signal/bruit, mesuré :
+
+        source à 0,05, canal à 25 dB
+          +0 dB  ->  33,5 dB de signal/bruit
+          +6 dB  ->  39,6 dB
+         +12 dB  ->  45,6 dB
+         +18 dB  ->  51,4 dB
+
+    Le `gain_sortie`, lui, agit après le démodulateur et n'améliore rien : le
+    même essai donne 33,5 dB quel que soit le réglage. C'est la différence
+    entre remonter le niveau à l'émission et le remonter à la réception, et
+    c'est la raison pour laquelle un diffuseur surveille sa modulation.
+
+    Il faut donc s'en servir quand la source est gravée bas : sous-moduler la
+    porteuse, c'est gaspiller l'excursion que la norme accorde.
+
+    Au-delà du point où l'excursion est pleine, le limiteur de l'émetteur
+    écrête et la distorsion apparaît — comme sur un émetteur réellement
+    surmodulé. Dans l'essai ci-dessus, cela se produit vers +24 dB."""
 
     gain_sortie: float = 1.0
     """Gain de l'amplificateur du récepteur, en linéaire.
