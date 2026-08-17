@@ -217,6 +217,8 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         """
         self.onglets = QtWidgets.QTabWidget()
         self.onglets.addTab(self._onglet_image(), "Image")
+        self.onglets.addTab(self._onglet_bruit(), "Bruit")
+        self.onglets.addTab(self._onglet_magnetoscope(), "Magnétoscope")
         self.onglets.addTab(self._onglet_son(), "Son")
         return self.onglets
 
@@ -256,28 +258,6 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         colonne.addWidget(groupe)
 
         # --- canal ---
-        groupe = Groupe("Canal de transmission")
-        self.case_bruit = QtWidgets.QCheckBox("Bruit")
-        # Coché d'emblée : une réception parfaite n'a jamais existé, et le
-        # grain fait partie de l'image autant que le fourmillement des points.
-        # On coche AVANT de connecter — pendant la construction du panneau, la
-        # barre d'outils n'existe pas encore et `_appliquer` échouerait.
-        self.case_bruit.setChecked(True)
-        self.case_bruit.toggled.connect(self._appliquer)
-        groupe.ajouter(self.case_bruit)
-
-        self.curseur_bruit = Curseur("Rapport signal/bruit", 12.0, 60.0, 38.0, 1.0, "dB", 0)
-        self.curseur_phase = Curseur("Phase différentielle", 0.0, 90.0, 0.0, 1.0, "°", 0)
-        self.curseur_gain = Curseur("Gain différentiel", -1.0, 1.0, 0.0, 0.05, "", 2)
-        for curseur in (self.curseur_bruit, self.curseur_phase, self.curseur_gain):
-            curseur.valeur_changee.connect(self._appliquer)
-            groupe.ajouter(curseur)
-        groupe.ajouter(note(
-            "Poussez la phase différentielle et changez de norme avec les "
-            "touches 1, 2 et 3 : le NTSC tourne, le PAL pâlit, le SECAM ignore."
-        ))
-        colonne.addWidget(groupe)
-
         # --- image ---
         groupe = Groupe("Image")
         self.curseur_chroma = Curseur("Amplitude de chrominance", 0.0, 2.0, 1.0, 0.05, "×", 2)
@@ -311,7 +291,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         # Pas de 0,01 et non 0,02 : le curseur est entier sous le capot, et
         # avec un pas de deux centièmes la valeur par défaut de 0,15 n'était
         # tout simplement pas atteignable — elle se serait posée sur 0,16.
-        self.curseur_courbure = Curseur("Courbure de la dalle", 0.0, 1.0, 0.15, 0.01, "", 2)
+        self.curseur_courbure = Curseur("Courbure de la dalle", 0.0, 1.0, 0.30, 0.01, "", 2)
         self.curseur_coins = Curseur("Arrondi des coins", 0.0, 1.0, 0.0, 0.05, "", 2)
         for curseur in (self.curseur_courbure, self.curseur_coins):
             curseur.valeur_changee.connect(self._appliquer)
@@ -324,7 +304,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             "l'intersection d'un rayon avec la sphère."
         ))
 
-        self.curseur_halo = Curseur("Halo (dalle de verre)", 0.0, 1.0, 0.06, 0.02, "×", 2)
+        self.curseur_halo = Curseur("Halo (dalle de verre)", 0.0, 1.0, 0.10, 0.02, "×", 2)
         self.curseur_halo_seuil = Curseur("Seuil du halo", 0.0, 0.95, 0.55, 0.05, "", 2)
         self.curseur_halo_rayon = Curseur("Rayon du halo", 0.005, 0.10, 0.025, 0.005, "", 3)
         for curseur in (self.curseur_halo, self.curseur_halo_seuil,
@@ -385,6 +365,123 @@ class FenetreLecteur(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------
 
+    def _onglet_bruit(self) -> QtWidgets.QWidget:
+        """Le canal — et il en faut UN, pas deux.
+
+        Le bruit avait sa place dans l'onglet Image tant que l'image était
+        seule à en souffrir. Depuis que la voie son existe, ce n'est plus vrai :
+        il y a un canal, une densité de bruit, et deux porteuses qui y puisent.
+        Le laisser du côté de l'image laissait croire qu'il lui appartenait.
+        """
+        defilement, colonne = self._page()
+
+        groupe = Groupe("Canal de transmission")
+        self.case_bruit = QtWidgets.QCheckBox("Bruit")
+        # Coché d'emblée : une réception parfaite n'a jamais existé, et le
+        # grain fait partie de l'image autant que le fourmillement des points.
+        # On coche AVANT de connecter — pendant la construction du panneau, la
+        # barre d'outils n'existe pas encore et `_appliquer` échouerait.
+        self.case_bruit.setChecked(True)
+        self.case_bruit.toggled.connect(self._appliquer)
+        groupe.ajouter(self.case_bruit)
+
+        self.curseur_bruit = Curseur("Rapport signal/bruit", 12.0, 60.0, 38.0, 1.0, "dB", 0)
+        self.curseur_phase = Curseur("Phase différentielle", 0.0, 90.0, 0.0, 1.0, "°", 0)
+        self.curseur_gain = Curseur("Gain différentiel", -1.0, 1.0, 0.0, 0.05, "", 2)
+        for curseur in (self.curseur_bruit, self.curseur_phase, self.curseur_gain):
+            curseur.valeur_changee.connect(self._appliquer)
+            groupe.ajouter(curseur)
+        groupe.ajouter(note(
+            "Poussez la phase différentielle et changez de norme avec les "
+            "touches 1, 2 et 3 : le NTSC tourne, le PAL pâlit, le SECAM ignore."
+        ))
+        colonne.addWidget(groupe)
+
+        groupe = Groupe("Ce que le son en récolte")
+        self.etiquette_cn = note("")
+        groupe.ajouter(self.etiquette_cn)
+        groupe.ajouter(note(
+            "Une seule densité de bruit, deux porteuses. Ce que la voie son en "
+            "récolte se déduit de sa largeur de bande — cent trente kilohertz "
+            "contre cinq mégahertz, seize décibels de gagnés — et de sa "
+            "puissance d'émission, dix à treize décibels plus bas.\n\n"
+            "Poussez le bruit et écoutez : en FM le son reste net bien après que "
+            "l'image a commencé à neiger. En SECAM-L, dont le son est modulé en "
+            "amplitude, les deux se dégradent ensemble."
+        ))
+        colonne.addWidget(groupe)
+
+        colonne.addStretch(1)
+        return defilement
+
+    # ------------------------------------------------------------------
+
+    def _onglet_magnetoscope(self) -> QtWidgets.QWidget:
+        """Le magnétoscope, entre le canal et le téléviseur — sa vraie place."""
+        defilement, colonne = self._page()
+
+        groupe = Groupe("Cassette VHS")
+        self.case_vhs = QtWidgets.QCheckBox("Passer par une cassette")
+        self.case_vhs.toggled.connect(self._appliquer)
+        groupe.ajouter(self.case_vhs)
+
+        self.combo_vitesse_vhs = QtWidgets.QComboBox()
+        for code, libelle in (
+            ("SP", "SP — 3 heures, la meilleure définition"),
+            ("LP", "LP — 6 heures"),
+            ("EP", "EP — 9 heures, la plus mauvaise"),
+        ):
+            self.combo_vitesse_vhs.addItem(libelle, code)
+        self.combo_vitesse_vhs.currentIndexChanged.connect(self._appliquer)
+        groupe.ajouter(QtWidgets.QLabel("Vitesse de défilement"))
+        groupe.ajouter(self.combo_vitesse_vhs)
+
+        self.curseur_generation = Curseur("Génération de copie", 1.0, 4.0, 1.0, 1.0, "", 0)
+        self.curseur_usure = Curseur("Usure de la bande", 0.0, 1.0, 0.15, 0.05, "", 2)
+        self.curseur_gigue = Curseur("Gigue de défilement", 0.0, 1.0, 0.35, 0.05, "", 2)
+        self.curseur_abandons = Curseur("Pertes de signal", 0.0, 1.0, 0.25, 0.05, "", 2)
+        self.curseur_liseré = Curseur("Liseré de contour", 0.0, 2.0, 0.8, 0.05, "", 2)
+        for curseur in (self.curseur_generation, self.curseur_usure,
+                        self.curseur_gigue, self.curseur_abandons,
+                        self.curseur_liseré):
+            curseur.valeur_changee.connect(self._appliquer)
+            groupe.ajouter(curseur)
+
+        self.case_commutation = QtWidgets.QCheckBox(
+            "Commutation des têtes (bas de l'image)"
+        )
+        self.case_commutation.setChecked(True)
+        self.case_commutation.toggled.connect(self._appliquer)
+        groupe.ajouter(self.case_commutation)
+
+        self.etiquette_vhs = note("")
+        groupe.ajouter(self.etiquette_vhs)
+        colonne.addWidget(groupe)
+
+        groupe = Groupe("Ce que la cassette fait")
+        groupe.ajouter(note(
+            "Un magnétoscope n'enregistre pas le composite tel quel : il le "
+            "DÉMONTE. La bande ne tient pas cinq mégahertz, et le contact "
+            "tête/bande fluctue trop pour qu'un enregistrement en amplitude soit "
+            "envisageable. D'où le procédé color-under — séparer, moduler la "
+            "luminance en fréquence, et transposer la chrominance SOUS elle, à "
+            "627 kHz.\n\n"
+            "Le prix tient dans un chiffre : la couleur ne dispose plus que de "
+            "400 kHz contre 1,3 MHz, et sa définition horizontale tombe à une "
+            "trentaine de lignes quand la luminance en garde 240. C'est ce qui "
+            "trahit une cassette même quand tout le reste est propre.\n\n"
+            "La gigue ne fait PAS tourner la teinte : la porteuse de relecture "
+            "est régénérée à partir du signal lu, et l'erreur de base de temps "
+            "s'annule dans la démodulation. C'est même toute la raison d'être du "
+            "color-under."
+        ))
+        colonne.addWidget(groupe)
+
+        colonne.addStretch(1)
+        return defilement
+
+    # ------------------------------------------------------------------
+
     def _onglet_son(self) -> QtWidgets.QWidget:
         """La voie son : sa porteuse, et ce que le canal lui fait.
 
@@ -411,21 +508,6 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         groupe.ajouter(self.etiquette_porteuse)
         colonne.addWidget(groupe)
 
-        groupe = Groupe("Le canal")
-        self.etiquette_cn = note("")
-        groupe.ajouter(self.etiquette_cn)
-        groupe.ajouter(note(
-            "Le bruit se règle dans l'onglet Image, et c'est le même : une seule "
-            "densité de bruit, deux porteuses. Ce que la voie son en récolte "
-            "dépend de sa largeur de bande — cent trente kilohertz contre cinq "
-            "mégahertz, seize décibels de gagnés — et de sa puissance d'émission, "
-            "dix à treize décibels plus bas.\n\n"
-            "Poussez le bruit et écoutez : en FM le son reste net bien après que "
-            "l'image a commencé à neiger. En SECAM-L, dont le son est modulé en "
-            "amplitude, les deux se dégradent ensemble."
-        ))
-        colonne.addWidget(groupe)
-
         groupe = Groupe("Défauts du récepteur")
         self.curseur_intercarrier = Curseur(
             "Ronflement intercarrier", 0.0, 1.0, 0.0, 0.05, "", 2
@@ -433,7 +515,9 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.curseur_desaccord = Curseur(
             "Désaccord de l'oscillateur", -20e3, 20e3, 0.0, 500.0, "Hz", 0
         )
-        self.curseur_gain_son = Curseur("Gain avant modulation", 0.0, 2.0, 1.0, 0.05, "×", 2)
+        self.curseur_gain_son = Curseur(
+            "Niveau d'entrée du modulateur", -12.0, 30.0, 0.0, 1.0, "dB", 0
+        )
         self.curseur_gain_sortie = Curseur(
             "Gain de sortie du poste", -12.0, 24.0, 0.0, 1.0, "dB", 0
         )
@@ -448,9 +532,16 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             "modulation parasite de la porteuse image se retrouve dans le "
             "haut-parleur. D'où le ronflement de trame et le sifflement de ligne, "
             "qui montent avec la luminosité de l'image.\n\n"
-            "Au-delà de 1, le gain avant modulation fait travailler le limiteur "
-            "de l'émetteur et la distorsion apparaît, exactement comme sur un "
-            "émetteur surmodulé.\n\n"
+            "Le NIVEAU D'ENTRÉE du modulateur est le réglage du studio, et ce "
+            "n'est pas un bouton de volume : placé AVANT la modulation, il "
+            "décide de l'excursion réellement employée, donc du rapport "
+            "signal/bruit. Un décibel de gain ici en rend un — mesuré sur une "
+            "source gravée bas dans un canal à 25 dB : 33 dB de signal/bruit "
+            "sans gain, 45 avec douze décibels, 51 avec dix-huit.\n\n"
+            "Servez-vous-en quand la source est faible : sous-moduler la "
+            "porteuse, c'est gaspiller l'excursion que la norme accorde. "
+            "Au-delà du point où l'excursion est pleine, le limiteur de "
+            "l'émetteur écrête et la distorsion apparaît.\n\n"
             "Le gain de SORTIE, lui, est le bouton de volume du poste : il agit "
             "après la démodulation, amplifie donc le bruit autant que le signal, "
             "et ne rattrape aucune mauvaise réception. Il sert quand le fichier "
@@ -493,6 +584,14 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             halo_intensite=self.curseur_halo.valeur(),
             halo_seuil=self.curseur_halo_seuil.valeur(),
             halo_rayon=self.curseur_halo_rayon.valeur(),
+            vhs_actif=self.case_vhs.isChecked(),
+            vhs_vitesse=self.combo_vitesse_vhs.currentData(),
+            vhs_generation=int(self.curseur_generation.valeur()),
+            vhs_usure=self.curseur_usure.valeur(),
+            vhs_gigue=self.curseur_gigue.valeur(),
+            vhs_abandons=self.curseur_abandons.valeur(),
+            vhs_commutation=self.case_commutation.isChecked(),
+            vhs_depassement=self.curseur_liseré.valeur(),
             animer=self.case_animer.isChecked(),
             conserver_proportions=self.case_proportions.isChecked(),
         )
@@ -508,6 +607,19 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.etiquette_norme.setText(self.vue.description())
         self._appliquer_son(parametres)
 
+        if parametres.vhs_actif:
+            luma, chroma = parametres.bandes_vhs()
+            lignes_chroma = 2.0 * chroma * NORMES[parametres.norme].duree_ligne_active * 0.75
+            self.etiquette_vhs.setText(
+                f"Bande enregistrée : {luma / 1e6:.2f} MHz en luminance, "
+                f"{chroma / 1e3:.0f} kHz en chrominance — soit environ "
+                f"{lignes_chroma:.0f} lignes de définition de couleur, "
+                f"contre {2 * luma * NORMES[parametres.norme].duree_ligne_active * 0.75:.0f} "
+                "en luminance."
+            )
+        else:
+            self.etiquette_vhs.setText("Aucune cassette : le signal va droit au téléviseur.")
+
     def _parametres_son(self) -> ParametresSon:
         return ParametresSon(
             actif=self.case_son_tv.isChecked(),
@@ -516,7 +628,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             ),
             intercarrier=self.curseur_intercarrier.valeur(),
             desaccord=self.curseur_desaccord.valeur(),
-            gain_entree=self.curseur_gain_son.valeur(),
+            gain_entree=10.0 ** (self.curseur_gain_son.valeur() / 20.0),
             gain_sortie=10.0 ** (self.curseur_gain_sortie.valeur() / 20.0),
         )
 

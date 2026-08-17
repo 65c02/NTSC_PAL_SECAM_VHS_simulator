@@ -16,6 +16,7 @@ from tvcolor.constantes import NORMES, obtenir_norme
 from tvcolor.decodeur import ParametresDecodage
 from tvcolor.encodeur import ParametresEncodage
 from tvcolor.pipeline import Parametres
+from tvcolor.vhs import ParametresVHS
 
 from .widgets_base import Curseur, Groupe, note
 
@@ -33,33 +34,56 @@ _LIBELLES_CHROMA = {
 }
 
 
-class PanneauParametres(QtWidgets.QScrollArea):
-    """Tous les réglages de la chaîne, regroupés par étage."""
+class PanneauParametres(QtWidgets.QTabWidget):
+    """Tous les réglages de la chaîne, en onglets.
+
+    Le découpage suit ce que les réglages GOUVERNENT, et non l'ordre dans
+    lequel le signal les traverse.
+
+    Le bruit a son propre onglet, et c'est la raison d'être de ce découpage :
+    depuis que la voie son existe, **il n'appartient plus à l'image**. Il n'y a
+    qu'un canal et qu'une densité de bruit ; l'image et le son y puisent tous
+    les deux, chacun selon sa largeur de bande. Le laisser dans l'onglet Image
+    laissait croire le contraire.
+    """
 
     modifie = QtCore.pyqtSignal()
     norme_changee = QtCore.pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.setMinimumWidth(330)
-
-        contenu = QtWidgets.QWidget()
-        self._colonne = QtWidgets.QVBoxLayout(contenu)
-        self._colonne.setContentsMargins(8, 8, 8, 8)
-        self._colonne.setSpacing(8)
-        self.setWidget(contenu)
-
+        self.setMinimumWidth(360)
         self._silencieux = False
+
+        self._colonne = self._nouvelle_page("Image")
         self._construire_norme()
         self._construire_codage()
-        self._construire_canal()
         self._construire_decodage()
         self._construire_colorimetrie()
         self._colonne.addStretch(1)
 
+        self._colonne = self._nouvelle_page("Bruit")
+        self._construire_canal()
+        self._colonne.addStretch(1)
+
+        self._colonne = self._nouvelle_page("Magnétoscope")
+        self._construire_magnetoscope()
+        self._colonne.addStretch(1)
+
         self._appliquer_norme(self.code_norme())
+
+    def _nouvelle_page(self, titre: str) -> QtWidgets.QVBoxLayout:
+        """Ajoute un onglet défilant, et retourne la colonne où le garnir."""
+        defilement = QtWidgets.QScrollArea()
+        defilement.setWidgetResizable(True)
+        defilement.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        contenu = QtWidgets.QWidget()
+        colonne = QtWidgets.QVBoxLayout(contenu)
+        colonne.setContentsMargins(8, 8, 8, 8)
+        colonne.setSpacing(8)
+        defilement.setWidget(contenu)
+        self.addTab(defilement, titre)
+        return colonne
 
     # ------------------------------------------------------------------
     # Construction
@@ -136,6 +160,63 @@ class PanneauParametres(QtWidgets.QScrollArea):
                 "poussant ce curseur."
             )
         )
+        groupe.ajouter(note(
+            "Ces réglages ont leur propre onglet pour une raison précise : le "
+            "bruit N'APPARTIENT PAS à l'image. Il y a un canal, une densité de "
+            "bruit, et deux porteuses qui y puisent — celle de l'image et celle "
+            "du son. Ce que chacune en récolte se déduit de sa largeur de bande "
+            "et de sa puissance d'émission ; l'onglet Son montre le calcul et "
+            "ce qu'il donne à l'oreille."
+        ))
+        self._colonne.addWidget(groupe)
+
+    def _construire_magnetoscope(self) -> None:
+        """Le magnétoscope, entre l'antenne et le téléviseur — sa vraie place."""
+        groupe = Groupe("Magnétoscope (cassette VHS)")
+
+        self.case_vhs = QtWidgets.QCheckBox("Passer par une cassette")
+        self.case_vhs.toggled.connect(self._signaler)
+        groupe.ajouter(self.case_vhs)
+
+        self.combo_vitesse_vhs = QtWidgets.QComboBox()
+        for code, libelle in (
+            ("SP", "SP — 3 heures, la meilleure définition"),
+            ("LP", "LP — 6 heures"),
+            ("EP", "EP — 9 heures, la plus mauvaise"),
+        ):
+            self.combo_vitesse_vhs.addItem(libelle, code)
+        self.combo_vitesse_vhs.currentIndexChanged.connect(self._signaler)
+        groupe.ajouter(QtWidgets.QLabel("Vitesse de défilement"))
+        groupe.ajouter(self.combo_vitesse_vhs)
+
+        self.generation_vhs = Curseur("Génération de copie", 1.0, 5.0, 1.0, 1.0, "", 0)
+        self.usure_vhs = Curseur("Usure de la bande", 0.0, 1.0, 0.15, 0.05, "", 2)
+        self.gigue_vhs = Curseur("Gigue de défilement", 0.0, 1.0, 0.35, 0.05, "", 2)
+        self.abandons_vhs = Curseur("Pertes de signal", 0.0, 1.0, 0.25, 0.05, "", 2)
+        self.depassement_vhs = Curseur("Liseré de contour", 0.0, 2.0, 0.8, 0.05, "", 2)
+        for c in (self.generation_vhs, self.usure_vhs, self.gigue_vhs,
+                  self.abandons_vhs, self.depassement_vhs):
+            c.valeur_changee.connect(self._signaler)
+            groupe.ajouter(c)
+
+        self.case_commutation = QtWidgets.QCheckBox("Commutation des têtes (bas de l'image)")
+        self.case_commutation.setChecked(True)
+        self.case_commutation.toggled.connect(self._signaler)
+        groupe.ajouter(self.case_commutation)
+
+        self.etiquette_vhs = note("")
+        groupe.ajouter(self.etiquette_vhs)
+        groupe.ajouter(note(
+            "Un magnétoscope n'enregistre pas le composite tel quel : il sépare "
+            "luminance et chrominance, module la première en fréquence et "
+            "TRANSPOSE la seconde sous elle, à 627 kHz. D'où le nom de "
+            "color-under, et d'où la caractéristique du format : la couleur du "
+            "VHS est huit fois moins fine que sa luminance.\n\n"
+            "La gigue est l'artefact le plus reconnaissable — la bande ne défile "
+            "pas d'un mouvement parfait, et les verticales ondulent. Elle ne fait "
+            "PAS tourner la teinte : la porteuse de relecture est régénérée à "
+            "partir du signal lu, et l'erreur s'annule dans la démodulation."
+        ))
         self._colonne.addWidget(groupe)
 
     def _construire_decodage(self) -> None:
@@ -296,6 +377,16 @@ class PanneauParametres(QtWidgets.QScrollArea):
                 piedestal=self.case_piedestal.isChecked(),
                 entrelace=self.case_entrelace.isChecked(),
                 numero_image=self.spin_image.value(),
+            ),
+            vhs=ParametresVHS(
+                actif=self.case_vhs.isChecked(),
+                vitesse=self.combo_vitesse_vhs.currentData(),
+                generation=int(self.generation_vhs.valeur()),
+                usure=self.usure_vhs.valeur(),
+                gigue=self.gigue_vhs.valeur(),
+                abandons=self.abandons_vhs.valeur(),
+                commutation_tetes=self.case_commutation.isChecked(),
+                depassement=self.depassement_vhs.valeur(),
             ),
             canal=ParametresCanal(
                 rapport_signal_bruit=(

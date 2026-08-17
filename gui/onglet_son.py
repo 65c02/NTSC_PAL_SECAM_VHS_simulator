@@ -156,7 +156,9 @@ class OngletSon(QtWidgets.QScrollArea):
         self.curseur_desaccord = Curseur(
             "Désaccord de l'oscillateur", -20e3, 20e3, 0.0, 500.0, "Hz", 0
         )
-        self.curseur_gain = Curseur("Gain avant modulation", 0.0, 2.0, 1.0, 0.05, "×", 2)
+        self.curseur_gain = Curseur(
+            "Niveau d'entrée du modulateur", -12.0, 30.0, 0.0, 1.0, "dB", 0
+        )
         self.curseur_gain_sortie = Curseur(
             "Gain de sortie du poste", -12.0, 24.0, 0.0, 1.0, "dB", 0
         )
@@ -227,7 +229,7 @@ class OngletSon(QtWidgets.QScrollArea):
             intercarrier=self.curseur_intercarrier.valeur(),
             niveau_video=self.curseur_niveau_video.valeur(),
             desaccord=self.curseur_desaccord.valeur(),
-            gain_entree=self.curseur_gain.valeur(),
+            gain_entree=10.0 ** (self.curseur_gain.valeur() / 20.0),
             gain_sortie=10.0 ** (self.curseur_gain_sortie.valeur() / 20.0),
         )
 

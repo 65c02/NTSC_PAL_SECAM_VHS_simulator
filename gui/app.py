@@ -80,15 +80,12 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
         self.panneau.modifie.connect(self._demander_rendu)
         self.panneau.modifie.connect(self._contexte_son)
 
-        # Deux onglets : l'image d'un côté, le son de l'autre. Ils partagent la
-        # norme et le canal — il n'y a qu'une porteuse image et qu'un bruit —
-        # mais rien d'autre, et les mêler dans un seul panneau le rendait
-        # interminable.
+        # Le panneau est lui-même le classeur d'onglets — Image, Bruit,
+        # Magnétoscope — et l'on y ajoute celui du son. Les mêler dans une
+        # seule colonne la rendait interminable, et surtout laissait croire que
+        # le bruit était un réglage d'image.
         self.onglet_son = OngletSon()
-        self.reglages = QtWidgets.QTabWidget()
-        self.reglages.addTab(self.panneau, "Image")
-        self.reglages.addTab(self.onglet_son, "Son")
-        self.reglages.setMinimumWidth(360)
+        self.panneau.addTab(self.onglet_son, "Son")
 
         self.vues = VueImages()
         self.vues.ligne_choisie.connect(self._sur_ligne)
@@ -116,7 +113,7 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
         vertical.setStretchFactor(1, 2)
 
         horizontal = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        horizontal.addWidget(self.reglages)
+        horizontal.addWidget(self.panneau)
         horizontal.addWidget(vertical)
         horizontal.setStretchFactor(0, 0)
         horizontal.setStretchFactor(1, 1)
