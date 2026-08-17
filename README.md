@@ -10,11 +10,12 @@ ne sont **jamais dessinés**. Ils émergent du calcul. C'est la seule façon
 d'être sûr que ce qu'on regarde est vrai.
 
 📘 **Le cours complet est dans [`docs/cours.md`](docs/cours.md)** — la théorie,
-les mathématiques et les dérivations, illustrées par vingt-et-une figures
+les mathématiques et les dérivations, illustrées par vingt-deux figures
 produites par le simulateur lui-même. Le **chapitre 12** est consacré aux
-shaders : comment la même chaîne a été portée sur carte graphique, ce qu'un
-fragment shader interdit, et ce que le portage a coûté en fidélité — mesuré,
-pas affirmé.
+shaders — comment la même chaîne a été portée sur carte graphique, ce qu'un
+fragment shader interdit, et ce que le portage a coûté en fidélité — et le
+**chapitre 13** au son, qui ne voyageait pas dans le signal vidéo mais sur sa
+propre porteuse.
 
 ---
 
@@ -73,8 +74,10 @@ run.bat video mon_film.mp4               # équivalent, via le lanceur général
 
 **Commandes** — `Ctrl+O` ouvrir · `Espace` lire/pause · `1` `2` `3` changer de
 norme **sans interrompre la lecture** · `←` `→` reculer ou avancer de cinq
-secondes · `M` couper le son · `F11` plein écran, `Échap` pour en sortir. Le
-glisser-déposer fonctionne aussi dans la fenêtre.
+secondes · `M` couper le son · `F11` plein écran, `Échap` pour en sortir ·
+`Ctrl+E` exporter en MP4. Le glisser-déposer fonctionne aussi dans la fenêtre.
+
+Les réglages sont en deux onglets, **Image** et **Son**.
 
 Le plein écran masque toute l'interface — barre d'outils, panneau de réglages,
 transport et barre d'état : il ne reste que la dalle sur fond noir.
@@ -171,6 +174,67 @@ L'écart avec le simulateur de référence est **mesuré**, pas supposé
 NTSC et **0,92** en PAL — sous le seuil de perception — et **4,44** en SECAM.
 L'erreur n'est pas répartie : elle est concentrée sur les transitions, là où la
 forme exacte des filtres compte.
+
+### Le son passe par sa porteuse
+
+Le son d'un téléviseur ne voyageait **pas** dans le signal vidéo : il occupait
+sa propre porteuse, quelques mégahertz plus haut dans le même canal. Il subit
+donc le même bruit, et le simulateur le lui fait subir.
+
+| | porteuse | modulation | excursion | préaccentuation |
+|---|---|---|---|---|
+| NTSC-M | +4,5 MHz | FM | ±25 kHz | 75 µs |
+| PAL-B/G | +5,5 MHz | FM | ±50 kHz | 50 µs |
+| PAL-I | +6,0 MHz | FM | ±50 kHz | 50 µs |
+| SECAM-D/K | +6,5 MHz | FM | ±50 kHz | 50 µs |
+| **SECAM-L** | **+6,5 MHz** | **AM** | taux 54 % | aucune |
+
+La chaîne est complète : limitation à 15 kHz, préaccentuation, limiteur,
+modulation, **bruit de canal de la même densité que celui de l'image**, filtre
+à fréquence intermédiaire, démodulation, désaccentuation. Le souffle, le seuil
+FM et ses claquements, le ronflement intercarrier — rien n'est peint.
+
+Le **gain de sortie** de l'onglet Son est le bouton de volume du poste : il
+agit après la démodulation, amplifie donc le bruit autant que le signal, et ne
+rattrape aucune mauvaise réception. Il sert quand le fichier est gravé bas — ou
+simplement parce que la porteuse ne transportait qu'une voie, et que ramener
+une source stéréo en mono coûte jusqu'à trois décibels. Au-delà de la butée,
+l'étage sature en douceur plutôt que d'écrêter carré : mesuré, une source à
+0,03 encaisse les 24 dB sans la moindre distorsion, une source à 0,4 n'en prend
+que 9,5 avant de comprimer. Le curseur de volume du transport monte de son côté
+jusqu'à 200 %.
+
+Le réglage de bruit reste du côté image, et c'est voulu : il n'y a **qu'un
+canal**. Ce que la voie son en récolte se déduit de sa largeur de bande
+(130 kHz contre 5 MHz, soit 15,8 dB de gagnés) et de sa puissance d'émission
+(10 à 13 dB plus bas), sans rien choisir.
+
+Ce qui donne, à 30 dB de rapport signal/bruit d'image :
+
+| | porteuse/bruit | son restitué |
+|---|---|---|
+| NTSC-M | 37,2 dB | 56,7 dB |
+| PAL-B/G | 32,9 dB | 57,2 dB |
+| **SECAM-L** | **43,0 dB** | **31,9 dB** |
+
+Le SECAM-L part avec **le meilleur rapport porteuse/bruit des cinq systèmes** —
+sa porteuse est la plus étroite et la mieux servie en puissance — et arrive
+vingt-cinq décibels derrière. Toute la différence tient à ce que sa modulation
+d'amplitude n'apporte aucun gain de démodulation, là où la FM en rend une
+vingtaine de décibels. C'est l'explication de ce que tout le monde a constaté
+sans se l'expliquer : ailleurs, le son restait propre bien après que l'image
+eut commencé à neiger.
+
+### Exporter en MP4
+
+`Ctrl+E` convertit la vidéo ouverte en la faisant passer par le téléviseur —
+et l'on enregistre **ce qu'on voit** : courbure, réponse du tube, halo, lignes
+de balayage, son par la porteuse.
+
+La géométrie suit la taille de DESTINATION, pas celle de la fenêtre. Exporter
+en 1152 points de haut depuis une fenêtre de 700 donne donc des lignes de
+balayage bien plus franches, et c'est juste : 576 lignes dans 1152 pixels, on
+passe enfin la limite de Shannon.
 
 ### La définition du tube
 
@@ -347,8 +411,8 @@ lecteur/          le lecteur vidéo temps réel
   app.py            la fenêtre
 
 gui/              le banc de mesure PyQt5
-docs/             le cours, ses vingt-et-une figures, et leurs générateurs
-tests/            76 tests
+docs/             le cours, ses vingt-deux figures, et leurs générateurs
+tests/            115 tests
 ```
 
 ---

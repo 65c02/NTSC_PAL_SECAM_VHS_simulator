@@ -980,6 +980,77 @@ def figure_21_shader_contre_reference(dossier: Path) -> Path | None:
 
 
 # ===========================================================================
+# 9. La voie son
+# ===========================================================================
+
+@figure("22", "Le son se dégrade-t-il comme l'image ?")
+def figure_22_son(dossier: Path) -> Path:
+    """Ce que le canal fait au son de chaque système.
+
+    C'est la figure qui explique un souvenir partagé par tout le monde : sur un
+    poste d'antenne mal orientée, l'image neigeait longtemps avant que le son
+    ne devienne inécoutable. La raison tient en un mot — la démodulation de
+    fréquence — et le SECAM-L, qui module son son en amplitude, en est la
+    contre-épreuve.
+    """
+    from tvcolor import son as son_tv
+
+    codes = ("NTSC-M", "PAL-BG", "SECAM-L")
+    couleurs = (ROUGE, BLEU, VERT)
+    niveaux = np.array([50.0, 40.0, 34.0, 30.0, 26.0, 22.0, 18.0, 14.0, 10.0, 6.0])
+
+    fig, axes = plt.subplots(1, 3, figsize=(12.4, 3.9))
+
+    # -- ce que chaque voie récolte du même bruit
+    for code, couleur in zip(codes, couleurs):
+        norme = obtenir_norme(code)
+        cn = [son_tv.rapport_porteuse_bruit(norme, s) for s in niveaux]
+        axes[0].plot(niveaux, cn, color=couleur, lw=2, label=norme.code)
+    axes[0].plot(niveaux, niveaux, color=GRIS, ls=":", lw=1.2, label="image")
+    axes[0].set_title("Ce que la porteuse son récolte")
+    axes[0].set_xlabel("rapport signal/bruit de l'image (dB)")
+    axes[0].set_ylabel("porteuse/bruit du son (dB)")
+    axes[0].legend()
+
+    # -- ce qui en ressort réellement
+    resultats = {}
+    for code, couleur in zip(codes, couleurs):
+        norme = obtenir_norme(code)
+        mesures = [
+            son_tv.evaluer(
+                norme, 48000, son_tv.ParametresSon(rapport_signal_bruit=float(s))
+            ).rapport_signal_bruit
+            for s in niveaux
+        ]
+        resultats[code] = mesures
+        axes[1].plot(niveaux, mesures, color=couleur, lw=2, marker="o",
+                     markersize=3, label=norme.code)
+    axes[1].axhline(30.0, color=GRIS, ls="--", lw=1.0)
+    axes[1].text(niveaux.max(), 31.0, "écoute confortable", color=GRIS,
+                 fontsize=7, ha="right")
+    axes[1].plot(niveaux, niveaux, color=GRIS, ls=":", lw=1.2)
+    axes[1].set_title("Ce que le haut-parleur restitue")
+    axes[1].set_xlabel("rapport signal/bruit de l'image (dB)")
+    axes[1].set_ylabel("signal/bruit du son mesuré (dB)")
+    axes[1].legend()
+
+    # -- l'écart entre les deux, qui EST le gain de la démodulation
+    for code, couleur in zip(codes, couleurs):
+        ecart = np.array(resultats[code]) - niveaux
+        axes[2].plot(niveaux, ecart, color=couleur, lw=2, label=obtenir_norme(code).code)
+    axes[2].axhline(0.0, color=GRIS, ls="--", lw=1.0)
+    axes[2].set_title("De combien le son devance l'image")
+    axes[2].set_xlabel("rapport signal/bruit de l'image (dB)")
+    axes[2].set_ylabel("avance du son (dB)")
+    axes[2].legend()
+
+    for ax in axes:
+        ax.invert_xaxis()
+    fig.tight_layout()
+    return _enregistrer(fig, dossier, "22", "son")
+
+
+# ===========================================================================
 
 def principal(argv=None) -> int:
     analyseur = argparse.ArgumentParser(description=__doc__)

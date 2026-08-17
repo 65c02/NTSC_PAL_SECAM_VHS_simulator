@@ -29,7 +29,8 @@ le test qui le contrôle.
 10. [Décoder : réjecteur, peigne, et les artefacts qui en naissent](#10-décoder--réjecteur-peigne-et-les-artefacts-qui-en-naissent)
 11. [Ce que tout cela fait au RGB d'origine](#11-ce-que-tout-cela-fait-au-rgb-dorigine)
 12. [Les shaders : la même chaîne, en temps réel](#12-les-shaders--la-même-chaîne-en-temps-réel)
-13. [Annexes](#13-annexes)
+13. [Le son : l'autre porteuse](#13-le-son--lautre-porteuse)
+14. [Annexes](#14-annexes)
 
 ---
 
@@ -1667,7 +1668,270 @@ portage a gardé la physique intacte.
 
 ---
 
-## 13. Annexes
+## 13. Le son : l'autre porteuse
+
+Ce cours a parlé jusqu'ici d'un seul signal. Il y en avait deux.
+
+Le son d'un téléviseur analogique ne voyage **pas** dans le signal vidéo. Il
+occupe sa propre porteuse, quelques mégahertz plus haut dans le même canal
+radio, et n'a de commun avec l'image que le canal — c'est-à-dire le bruit. De
+cette cohabitation naît une des choses les mieux connues et les plus rarement
+expliquées de la télévision hertzienne : **le son restait propre bien après que
+l'image eut commencé à neiger.**
+
+Sauf en France. Ce chapitre explique pourquoi.
+
+### 13.1 Où se trouve le son
+
+| | porteuse son | modulation | excursion | préaccentuation | puissance |
+|---|---|---|---|---|---|
+| NTSC-M | +4,5 MHz | FM | ±25 kHz | 75 µs | −10 dB |
+| PAL-B/G | +5,5 MHz | FM | ±50 kHz | 50 µs | −13 dB |
+| PAL-I | +6,0 MHz | FM | ±50 kHz | 50 µs | −10 dB |
+| SECAM-D/K | +6,5 MHz | FM | ±50 kHz | 50 µs | −13 dB |
+| **SECAM-L** | **+6,5 MHz** | **AM** | **taux 54 %** | **aucune** | **−10 dB** |
+
+Le décalage n'est pas un détail de rangement : il détermine la largeur du
+canal, et il a laissé une trace dans toute la vidéo moderne. La sous-porteuse
+couleur du NTSC, à 3,58 MHz, bat avec la porteuse son à 4,5 MHz ; le battement
+tombe à 920 kHz, en plein dans l'image. C'est pour l'éloigner qu'on a décalé
+tout le système M d'un facteur 1000/1001 — et c'est de là que viennent les
+29,97 images par seconde et le *timecode drop-frame*, qui empoisonnent encore
+le montage vidéo soixante-dix ans plus tard.
+
+L'excursion du système M ne fait que la moitié de celle de l'Europe, et ce
+n'est pas un oubli : le canal américain fait 6 MHz là où le canal européen en
+fait 7 ou 8. Il n'y avait pas la place. Nous verrons au §13.4 ce que cela coûte.
+
+### 13.2 Le récepteur à intercarrier
+
+Un récepteur pourrait démoduler la porteuse son directement. Presque aucun ne
+le fait, et depuis les années 1950. Tous exploitent le **battement** entre les
+deux porteuses, dont la fréquence est par construction leur différence.
+
+L'astuce est superbe. La fréquence du battement ne dépend **plus du tout** de
+l'oscillateur local : si celui-ci dérive, les deux porteuses dérivent
+ensemble et leur différence ne bouge pas. Un poste à intercarrier reste calé
+sur le son quel que soit son réglage d'image.
+
+Elle a un prix, et on l'entend. Toute modulation de phase parasite de la
+porteuse **image** se retrouve telle quelle sur le battement, et donc dans le
+haut-parleur. Or le signal vidéo est bourré de composantes périodiques : les
+impulsions de suppression, à 15 625 Hz pour la ligne et 50 Hz pour la trame.
+D'où les deux défauts que tout le monde a entendus sans les nommer :
+
+* le **sifflement de ligne**, à 15,6 kHz, que les enfants entendaient et les
+  adultes plus tout à fait ;
+* le **ronflement de trame**, à 50 Hz, qui n'est pas un ronflement de secteur
+  mais un ronflement d'*image* — et qui **monte avec la luminosité**, puisque
+  c'est la modulation de la porteuse image qui le fabrique. Un générique blanc
+  faisait ronfler les postes mal réglés, un fondu au noir les faisait taire.
+
+Le simulateur ne fabrique pas un bourdonnement « qui sonne juste » : il
+construit les deux trains d'impulsions de suppression avec leurs **rapports
+cycliques normatifs** — 19 % pour la ligne, 7,8 % pour la trame — et laisse les
+harmoniques tomber où elles tombent. C'est ce qui fait la différence entre un
+ronflement et un simple bourdon.
+
+> **Dans le code** — `tvcolor.son.ChaineSon._ronflement`.
+
+> **Vérifié par** — `tests/test_son.py::test_le_ronflement_porte_les_frequences_de_la_norme`,
+> qui contrôle que toutes les raies fortes tombent sur le peigne de la
+> fréquence **image** — et non de la fréquence trame, une trame comptant
+> 312,5 lignes.
+
+### 13.3 Un seul bruit, deux voies
+
+C'est le point de départ de tout le reste. Le canal a une densité spectrale de
+bruit $N_0$, et une seule. Ce que chaque voie en récolte ne dépend que de deux
+choses :
+
+$$\left(\frac{C}{N}\right)_{\text{son}} =
+  \left(\frac{S}{B}\right)_{\text{image}}
+  + 10\log_{10}\frac{B_{\text{image}}}{B_{\text{son}}}
+  + P_{\text{porteuse}}$$
+
+Le deuxième terme est un **gain**, et un gain considérable. La règle de Carson
+donne la largeur occupée par la porteuse son :
+
+$$B = 2\,(\Delta f + W) = 2\,(50 + 15) = 130\ \text{kHz}$$
+
+soit 130 kHz contre cinq mégahertz pour l'image — **15,8 dB de bruit en moins,
+par simple étroitesse**. Le troisième terme est une perte : la porteuse son est
+émise dix à treize décibels sous l'image.
+
+Le solde est positif de deux à six décibels. Le SECAM-L, dont la porteuse est
+la plus étroite de toutes — pas d'excursion à loger, donc $B = 2W = 30$ kHz —
+et la mieux servie en puissance, part **avec le meilleur rapport
+porteuse/bruit des cinq systèmes**.
+
+Retenez-le : il part gagnant.
+
+### 13.4 Le gain de la démodulation, et l'exception française
+
+![Le son face au bruit](figures/22_son.png)
+
+Les trois volets se lisent ensemble, et le troisième est la conclusion.
+
+**À gauche**, ce que chaque porteuse récolte du même bruit : le SECAM-L est en
+tête, comme annoncé. **Au milieu**, ce qui sort du haut-parleur : il est
+dernier, et de vingt-cinq décibels. **À droite**, l'écart entre les deux — qui
+n'est rien d'autre que le gain de la démodulation.
+
+Pour la modulation de fréquence, avec $\beta = \Delta f / W$, la théorie donne
+
+$$G = 3\,\beta^2\,(\beta + 1)$$
+
+soit 21,6 dB en PAL ($\beta = 3{,}33$) et seulement 13,5 dB en NTSC
+($\beta = 1{,}67$) — huit décibels de moins, pour la seule raison que le canal
+américain était plus étroit et n'admettait que la moitié de l'excursion.
+
+Pour la modulation d'amplitude, le gain est **zéro**. Non pas petit : nul, par
+définition. Un détecteur d'enveloppe ignore la phase, ne moyenne rien, et
+rectifie le bruit au lieu de le combattre.
+
+Mesuré sur la chaîne, pour un rapport signal/bruit d'image de 30 dB :
+
+| système | porteuse/bruit | signal/bruit du son | avance |
+|---|---|---|---|
+| NTSC-M | 37,2 dB | 56,7 dB | +26,7 dB |
+| PAL-B/G | 32,9 dB | 57,2 dB | +27,2 dB |
+| PAL-I | 36,3 dB | 59,5 dB | +29,5 dB |
+| SECAM-D/K | 33,6 dB | 57,8 dB | +27,8 dB |
+| **SECAM-L** | **43,0 dB** | **31,9 dB** | **+1,9 dB** |
+
+Le meilleur rapport porteuse/bruit des cinq, et le pire son. Toute la
+différence tient dans une ligne de code — l'une prend un **argument**, l'autre
+un **module** :
+
+```python
+if voie.modulation == "AM":
+    return (np.abs(z) - 1.0) / voie.taux_am          # détecteur d'enveloppe
+avance = np.angle(z * np.conj(precedent))            # discriminateur
+```
+
+C'est, à l'échelle du son, exactement la même leçon que celle des chapitres 7
+à 9 : ce n'est pas la qualité du signal reçu qui décide, c'est ce que le
+démodulateur sait en faire.
+
+> **Vérifié par** — `tests/test_son.py::test_le_son_du_systeme_l_est_bien_plus_fragile_que_celui_du_pal`,
+> qui exige les deux à la fois : que le SECAM-L parte avec un meilleur
+> porteuse/bruit, et qu'il arrive vingt décibels plus bas.
+
+### 13.5 La préaccentuation
+
+Le bruit d'un discriminateur de fréquence n'est pas blanc : il croît
+linéairement avec la fréquence — il est **triangulaire**. Les aigus sortent
+donc bien plus bruités que les graves, alors même qu'un programme musical y a
+moins d'énergie.
+
+D'où le remède, aussi vieux que la FM : relever les aigus à l'émission d'un
+réseau $1 + j\omega\tau$, les rabaisser d'autant à la réception. Le signal est
+rendu intact ; le bruit, lui, n'a subi que l'abaissement. Avec $\tau = 50$ µs,
+le relèvement atteint **+13,7 dB à 15 kHz**.
+
+Une subtilité d'implémentation vaut d'être signalée, parce qu'elle a failli
+coûter cher. La courbe idéale $1 + j\omega\tau$ monte indéfiniment ; sa
+transposition numérique directe place un pôle **exactement sur le cercle
+unité**, à Nyquist, et la désaccentuation entre en résonance. Aucun réseau réel
+ne monte indéfiniment — une résistance en parallèle borne la remontée — et l'on
+modélise donc l'épaule :
+
+$$H(s) = \frac{1 + s\tau}{1 + s\tau/K}, \qquad K = 2\pi \cdot 4W \cdot \tau$$
+
+L'épaule à quatre fois la bande audio laisse la courbe se confondre avec la
+théorie sur toute la bande utile — +13,4 dB mesurés à 15 kHz contre 13,7
+idéaux — tout en gardant un filtre stable.
+
+La désaccentuation est obtenue en **échangeant numérateur et dénominateur du
+filtre numérique**, et non en transposant séparément l'inverse analogique : la
+transformation bilinéaire étant une substitution appliquée aux deux à
+l'identique, l'échange donne l'inverse *exact*. L'aller-retour rend le signal
+à $3 \cdot 10^{-15}$ près, ce qu'un test vérifie — et il le faut, car une
+chaîne qui colorerait le signal en l'absence de tout bruit rendrait sans valeur
+toutes les mesures faites ensuite.
+
+### 13.6 Le seuil, et les claquements
+
+La modulation de fréquence a un défaut brutal : son avantage s'effondre d'un
+coup. Tant que le vecteur reçu reste dominé par la porteuse, le bruit ne fait
+que le faire trembler et le discriminateur mesure une phase à peu près juste.
+Dès que le bruit devient comparable à la porteuse, il arrive que le vecteur
+**fasse le tour de l'origine** : le discriminateur voit alors un saut de phase
+entier, et produit une impulsion. C'est le claquement caractéristique d'une FM
+en limite de réception.
+
+Mesuré sur la chaîne, en PAL :
+
+| porteuse/bruit | signal/bruit du son |
+|---|---|
+| 12,9 dB | 38,4 dB |
+| 6,9 dB | 22,9 dB |
+| 2,9 dB | 9,5 dB |
+
+Six décibels de canal en coûtent quinze, puis treize. La chute est bien plus
+raide qu'un décibel pour un décibel, et c'est la signature du seuil. Rien de
+tout cela n'est programmé : les claquements sortent de `np.angle`, qui ne sait
+rendre qu'une valeur entre $-\pi$ et $+\pi$.
+
+### 13.7 Le bouton de volume, et où il se trouve
+
+Le volume d'un téléviseur agit sur l'étage basse fréquence, **après** le
+démodulateur. La place n'est pas un détail d'ingénierie : elle décide de ce que
+le bouton peut et ne peut pas faire.
+
+Il amplifie le bruit autant que le signal. Un poste mal reçu ne s'améliore pas
+quand on monte le son, il devient seulement plus fort — ce que chacun a
+vérifié. C'est aussi ce que vérifie un test : à 15 dB de rapport signal/bruit
+d'image, douze décibels de gain laissent le rapport signal/bruit du son
+rigoureusement inchangé.
+
+Et il sature. Un étage de sortie poussé dans ses butées n'écrête pas carré : un
+transistor y arrive progressivement. On modélise donc une courbe strictement
+linéaire sous le seuil, puis une compression en tangente hyperbolique —
+raccordée en valeur *et* en pente, la dérivée de $	anh$ en zéro valant un.
+Mesuré :
+
+| niveau de la source | +6 dB | +12 dB | +18 dB | +24 dB |
+|---|---|---|---|---|
+| 0,03 | +6,0 | +12,0 | +18,0 | +24,0 |
+| 0,10 | +6,0 | +12,0 | +18,0 | +21,5 |
+| 0,40 | +6,0 | +9,5 | +10,3 | +10,7 |
+| 0,70 | +4,3 | +5,4 | +5,8 | +5,9 |
+
+Une source silencieuse encaisse tout le gain sans la moindre distorsion ; une
+source déjà forte n'en prend que ce qui reste de marge. C'est exactement le
+comportement d'un amplificateur, et non celui d'un multiplicateur.
+
+### 13.8 Ce qui n'est pas simulé, et pourquoi
+
+**La stéréophonie.** Le son de la télévision analogique, tel que décrit ici,
+est monophonique. Le NICAM et le Zweiton sont venus dans les années 1980 et
+ajoutent leurs propres porteuses — une porteuse numérique à 728 kbit/s pour le
+premier, une seconde porteuse FM pour le second. Une entrée stéréo est donc
+mélangée en mono, et **c'est une perte réelle**, pas un raccourci
+d'implémentation.
+
+**La porteuse à sa vraie fréquence.** Simuler une porteuse à 5,5 MHz pour y
+loger quinze kilohertz de musique demanderait d'échantillonner à plus de onze
+mégahertz — deux cent trente fois le taux du son. On travaille donc **en bande
+de base complexe**, c'est-à-dire dans le repère qui tourne avec la porteuse.
+Rien n'est perdu : la fréquence porteuse ne joue aucun rôle dans ce qui suit,
+seules comptent l'excursion, la largeur de bande et la puissance. La grille de
+travail vaut quatre fois la largeur de Carson, soit 528 kHz en PAL — et
+quatre, pas deux, parce que la FM produit des raies latérales au-delà de
+Carson, qui ne contient que 98 % de la puissance.
+
+Le coût de la chaîne complète est de 2 à 8 % d'un cœur pour du temps réel, ce
+qui laisse le lecteur vidéo parfaitement à l'aise.
+
+> **Dans le code** — `tvcolor/son.py`. Le banc de mesure et le lecteur vidéo
+> ont chacun un onglet **Son** qui donne accès à toute la chaîne, et le lecteur
+> sait exporter en MP4 le résultat complet, image et son.
+
+---
+
+## 14. Annexes
 
 ### A. Tableau des constantes
 
@@ -1817,6 +2081,7 @@ tvcolor/          la bibliothèque de simulation (numpy pur, sans Qt)
   pipeline.py       la chaîne complète
   mires.py          les mires de test
   mesures.py        vectorscope, spectres, ΔE, résolutions
+  son.py            la voie son : porteuse, modulation, canal (chapitre 13)
 
 shaders/          la même chaîne en GLSL (chapitre 12)
   sommet.vert       le triangle plein écran, sans tampon de sommets
@@ -1833,10 +2098,11 @@ lecteur/          le lecteur vidéo temps réel (PyQt5 + OpenGL)
   gl_util.py        compilation, cibles de rendu, quad plein écran
   vue_gl.py         l'enchaînement des passes, et leur chronométrage
   source_video.py   démultiplexage PyAV, son maître de l'horloge
-  app.py            la fenêtre et ses réglages
+  export_video.py   export MP4 de ce que le téléviseur montre
+  app.py            la fenêtre et ses réglages, en onglets Image et Son
 
 gui/              l'interface PyQt5 d'analyse d'une image fixe
-tests/            76 tests, dont ceux cités tout au long de ce cours
+tests/            115 tests, dont ceux cités tout au long de ce cours
 docs/             ce document et son générateur de figures
 ```
 
