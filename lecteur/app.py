@@ -19,6 +19,13 @@ from gui.widgets_base import Curseur, Glissiere, Groupe, note
 from tvcolor import mires
 from tvcolor.constantes import NORMES
 
+from tvcolor.son import (
+    ParametresSon,
+    gain_de_demodulation_db,
+    rapport_porteuse_bruit,
+)
+
+from .export_video import ExportateurMP4, ReglagesExport, dimensions
 from .normes_gl import QUALITES
 from .source_video import SourceVideo
 from .vue_gl import ParametresRendu, VueTelevision
@@ -123,6 +130,14 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         barre.addWidget(self.combo_mire)
 
         barre.addSeparator()
+        self.action_export = barre.addAction("Exporter en MP4…", self._exporter)
+        self.action_export.setShortcut("Ctrl+E")
+        self.action_export.setToolTip(
+            "Enregistre la vidéo telle que le téléviseur la montre, son compris"
+        )
+        self.action_export.setEnabled(False)
+
+        barre.addSeparator()
         action = barre.addAction("Plein écran")
         action.setShortcut("F11")
         action.setToolTip("Plein écran, interface masquée (F11 ou Échap pour revenir)")
@@ -165,10 +180,15 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.bouton_son.toggled.connect(self._basculer_son)
 
         self.barre_volume = Glissiere(QtCore.Qt.Horizontal)
-        self.barre_volume.setRange(0, 100)
+        # Jusqu'à 200 % : au-delà de la position normale, c'est déjà une
+        # amplification, et la source la réclame souvent.
+        self.barre_volume.setRange(0, 200)
         self.barre_volume.setValue(80)
         self.barre_volume.setFixedWidth(90)
-        self.barre_volume.setToolTip("Volume")
+        self.barre_volume.setToolTip(
+            "Volume — au-delà de 100 %, amplification.\n"
+            "Pour davantage, voir « gain de sortie » dans l'onglet Son."
+        )
         self.barre_volume.valueChanged.connect(
             lambda v: self.source.definir_volume(v / 100.0)
         )
@@ -188,16 +208,33 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         return widget
 
     def _construire_panneau(self) -> QtWidgets.QWidget:
+        """Les réglages, en deux onglets.
+
+        L'image et le son partagent la norme et le canal, mais rien d'autre :
+        les séparer évite un panneau interminable où l'on cherche son réglage.
+        Le rapport signal/bruit reste du côté image, et c'est voulu — il n'y a
+        qu'un canal, et c'est lui qui décide du sort des deux.
+        """
+        self.onglets = QtWidgets.QTabWidget()
+        self.onglets.addTab(self._onglet_image(), "Image")
+        self.onglets.addTab(self._onglet_son(), "Son")
+        return self.onglets
+
+    @staticmethod
+    def _page() -> tuple[QtWidgets.QScrollArea, QtWidgets.QVBoxLayout]:
         defilement = QtWidgets.QScrollArea()
         defilement.setWidgetResizable(True)
         defilement.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         defilement.setMinimumWidth(330)
-
         contenu = QtWidgets.QWidget()
         colonne = QtWidgets.QVBoxLayout(contenu)
         colonne.setContentsMargins(8, 8, 8, 8)
         colonne.setSpacing(8)
         defilement.setWidget(contenu)
+        return defilement, colonne
+
+    def _onglet_image(self) -> QtWidgets.QWidget:
+        defilement, colonne = self._page()
 
         # --- décodage ---
         groupe = Groupe("Décodage")
@@ -347,6 +384,87 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         return defilement
 
     # ------------------------------------------------------------------
+
+    def _onglet_son(self) -> QtWidgets.QWidget:
+        """La voie son : sa porteuse, et ce que le canal lui fait.
+
+        Le son d'un téléviseur ne voyage pas dans le signal vidéo. Il occupe sa
+        propre porteuse, quelques mégahertz plus haut dans le même canal, et
+        c'est le même bruit qui frappe les deux. D'où l'unique réglage de bruit,
+        resté du côté image : il n'y a qu'un canal.
+        """
+        defilement, colonne = self._page()
+
+        groupe = Groupe("La porteuse son")
+        self.case_son_tv = QtWidgets.QCheckBox("Faire passer le son par la porteuse")
+        self.case_son_tv.setChecked(True)
+        self.case_son_tv.toggled.connect(self._appliquer)
+        groupe.ajouter(self.case_son_tv)
+        groupe.ajouter(note(
+            "Décochez pour entendre le fichier tel quel, et comparer. Le son "
+            "restitué est monophonique : c'est ce que la porteuse transportait. "
+            "Le NICAM et le Zweiton, qui ont apporté la stéréo, sont venus plus "
+            "tard et sur d'autres porteuses encore."
+        ))
+
+        self.etiquette_porteuse = note("")
+        groupe.ajouter(self.etiquette_porteuse)
+        colonne.addWidget(groupe)
+
+        groupe = Groupe("Le canal")
+        self.etiquette_cn = note("")
+        groupe.ajouter(self.etiquette_cn)
+        groupe.ajouter(note(
+            "Le bruit se règle dans l'onglet Image, et c'est le même : une seule "
+            "densité de bruit, deux porteuses. Ce que la voie son en récolte "
+            "dépend de sa largeur de bande — cent trente kilohertz contre cinq "
+            "mégahertz, seize décibels de gagnés — et de sa puissance d'émission, "
+            "dix à treize décibels plus bas.\n\n"
+            "Poussez le bruit et écoutez : en FM le son reste net bien après que "
+            "l'image a commencé à neiger. En SECAM-L, dont le son est modulé en "
+            "amplitude, les deux se dégradent ensemble."
+        ))
+        colonne.addWidget(groupe)
+
+        groupe = Groupe("Défauts du récepteur")
+        self.curseur_intercarrier = Curseur(
+            "Ronflement intercarrier", 0.0, 1.0, 0.0, 0.05, "", 2
+        )
+        self.curseur_desaccord = Curseur(
+            "Désaccord de l'oscillateur", -20e3, 20e3, 0.0, 500.0, "Hz", 0
+        )
+        self.curseur_gain_son = Curseur("Gain avant modulation", 0.0, 2.0, 1.0, 0.05, "×", 2)
+        self.curseur_gain_sortie = Curseur(
+            "Gain de sortie du poste", -12.0, 24.0, 0.0, 1.0, "dB", 0
+        )
+        for curseur in (self.curseur_intercarrier, self.curseur_desaccord,
+                        self.curseur_gain_son, self.curseur_gain_sortie):
+            curseur.valeur_changee.connect(self._appliquer)
+            groupe.ajouter(curseur)
+        groupe.ajouter(note(
+            "Un récepteur à intercarrier tire le son du BATTEMENT entre porteuse "
+            "image et porteuse son. Le procédé est d'une stabilité remarquable — "
+            "la dérive de l'oscillateur s'annule dans la soustraction — mais toute "
+            "modulation parasite de la porteuse image se retrouve dans le "
+            "haut-parleur. D'où le ronflement de trame et le sifflement de ligne, "
+            "qui montent avec la luminosité de l'image.\n\n"
+            "Au-delà de 1, le gain avant modulation fait travailler le limiteur "
+            "de l'émetteur et la distorsion apparaît, exactement comme sur un "
+            "émetteur surmodulé.\n\n"
+            "Le gain de SORTIE, lui, est le bouton de volume du poste : il agit "
+            "après la démodulation, amplifie donc le bruit autant que le signal, "
+            "et ne rattrape aucune mauvaise réception. Il sert quand le fichier "
+            "est gravé bas — ou simplement parce que la porteuse ne transportait "
+            "qu'une voie, et que ramener une source stéréo en mono coûte jusqu'à "
+            "trois décibels. Au-delà de la butée, l'étage de sortie sature en "
+            "douceur au lieu d'écrêter carré."
+        ))
+        colonne.addWidget(groupe)
+
+        colonne.addStretch(1)
+        return defilement
+
+    # ------------------------------------------------------------------
     # Réglages
     # ------------------------------------------------------------------
 
@@ -388,6 +506,57 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.combo_separateur.setEnabled(famille != "SECAM")
         self.vue.appliquer(parametres)
         self.etiquette_norme.setText(self.vue.description())
+        self._appliquer_son(parametres)
+
+    def _parametres_son(self) -> ParametresSon:
+        return ParametresSon(
+            actif=self.case_son_tv.isChecked(),
+            rapport_signal_bruit=(
+                self.curseur_bruit.valeur() if self.case_bruit.isChecked() else None
+            ),
+            intercarrier=self.curseur_intercarrier.valeur(),
+            desaccord=self.curseur_desaccord.valeur(),
+            gain_entree=self.curseur_gain_son.valeur(),
+            gain_sortie=10.0 ** (self.curseur_gain_sortie.valeur() / 20.0),
+        )
+
+    def _appliquer_son(self, parametres: ParametresRendu) -> None:
+        reglages = self._parametres_son()
+        self.source.definir_son_tv(parametres.norme, reglages)
+
+        norme = NORMES[parametres.norme]
+        voie = norme.son
+        detail = (
+            f"±{voie.deviation / 1e3:.0f} kHz d'excursion, "
+            f"préaccentuation {voie.preaccentuation * 1e6:.0f} µs"
+            if voie.modulation == "FM"
+            else f"taux de modulation {voie.taux_am:.0%}, sans préaccentuation"
+        )
+        self.etiquette_porteuse.setText(
+            f"{norme.nom}\n"
+            f"Porteuse à +{voie.decalage / 1e6:.1f} MHz de la porteuse image, "
+            f"modulée en {'fréquence' if voie.modulation == 'FM' else 'AMPLITUDE'}, "
+            f"{detail}. Émise à {voie.niveau_porteuse_db:.0f} dB sous l'image, "
+            f"bande audio {voie.bande_audio / 1e3:.0f} kHz."
+        )
+
+        if reglages.rapport_signal_bruit is None:
+            self.etiquette_cn.setText("Canal parfait : aucun bruit sur aucune des deux voies.")
+            return
+
+        cn = rapport_porteuse_bruit(norme, reglages.rapport_signal_bruit)
+        gain = gain_de_demodulation_db(voie)
+        self.etiquette_cn.setText(
+            f"Image {reglages.rapport_signal_bruit:.0f} dB  →  porteuse son "
+            f"{cn:.1f} dB de rapport porteuse/bruit.\n"
+            + (
+                f"La démodulation de fréquence en récupère environ {gain:.0f} dB : "
+                "le son tient largement."
+                if gain > 0
+                else "La démodulation d'amplitude n'en récupère AUCUN : "
+                "le son se dégrade au même rythme que l'image."
+            )
+        )
 
     # ------------------------------------------------------------------
     # Source
@@ -421,6 +590,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self._silencieux = True
         self.combo_mire.setCurrentIndex(0)
         self._silencieux = False
+        self.action_export.setEnabled(True)
 
         # La barre est graduée en millisecondes : la seconde entière serait un
         # cran trop gros pour se placer précisément dans un plan.
@@ -550,6 +720,87 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             if chemin and Path(chemin).is_file():
                 self._ouvrir_chemin(chemin)
                 break
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _exporter(self) -> None:
+        """Convertit la vidéo courante en MP4, effets de tube et son compris."""
+        if self.source.infos is None:
+            QtWidgets.QMessageBox.information(
+                self, "Export", "Ouvrez d'abord une vidéo."
+            )
+            return
+
+        source = self.source.infos.chemin
+        defaut = str(Path(source).with_name(
+            Path(source).stem + f"_{self.combo_norme.currentData()}.mp4"
+        ))
+        destination, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Exporter en MP4", defaut, "Vidéo MP4 (*.mp4)"
+        )
+        if not destination:
+            return
+
+        hauteur, valide = QtWidgets.QInputDialog.getInt(
+            self, "Hauteur de l'image",
+            "Hauteur en pixels — au-delà de 1152, les lignes de balayage\n"
+            "passent enfin la limite de Shannon et deviennent franches :",
+            1152, 240, 2160, 24,
+        )
+        if not valide:
+            return
+
+        etait_en_lecture = self.source.en_lecture
+        self.source.pause()
+
+        reglages = ReglagesExport(destination=destination, hauteur=hauteur)
+        largeur, hauteur = dimensions(hauteur)
+
+        dialogue = QtWidgets.QProgressDialog(
+            f"Export en {largeur}×{hauteur}…", "Annuler", 0, 100, self
+        )
+        dialogue.setWindowTitle("Export MP4")
+        dialogue.setWindowModality(QtCore.Qt.WindowModal)
+        dialogue.setMinimumDuration(0)
+        dialogue.setAutoClose(False)
+
+        exportateur = ExportateurMP4(self.vue, self)
+        dialogue.canceled.connect(exportateur.annuler)
+
+        def avancer(n, total):
+            if total > 0:
+                dialogue.setMaximum(total)
+                dialogue.setValue(n)
+                dialogue.setLabelText(
+                    f"Export en {largeur}×{hauteur} — image {n} sur {total}"
+                )
+            else:
+                dialogue.setMaximum(0)
+                dialogue.setLabelText(f"Export en {largeur}×{hauteur} — image {n}")
+
+        exportateur.progression.connect(avancer)
+        exportateur.terminee.connect(
+            lambda message: self._etat.setText(f"Export terminé — {message}")
+        )
+        exportateur.echouee.connect(
+            lambda message: QtWidgets.QMessageBox.warning(self, "Export", message)
+        )
+
+        # L'image affichée est perdue pendant l'export : la vue sert de moteur
+        # de rendu, image par image. On la remet ensuite là où elle était.
+        try:
+            exportateur.exporter(
+                source, reglages, self.combo_norme.currentData(), self._parametres_son()
+            )
+        finally:
+            dialogue.close()
+            self.source.chercher(self._position)
+            if etait_en_lecture:
+                self.source.lire()
+
+    # ------------------------------------------------------------------
 
     def resizeEvent(self, evenement):  # noqa: N802 - API Qt
         # La finesse d'affichage — combien de pixels d'écran par ligne de

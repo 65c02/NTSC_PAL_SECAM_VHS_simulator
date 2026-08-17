@@ -19,6 +19,7 @@ from tvcolor import mesures, mires
 from tvcolor.constantes import NORMES
 from tvcolor.pipeline import Parametres, Resultat, encoder_decoder
 
+from .onglet_son import OngletSon
 from .panneau_params import PanneauParametres
 from .vue_images import VueImages
 from .widgets_mesure import Bilan, FormeOnde, Oscilloscope, ProfilLigne, Spectre, Vectorscope
@@ -77,6 +78,17 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
     def _construire_interface(self) -> None:
         self.panneau = PanneauParametres()
         self.panneau.modifie.connect(self._demander_rendu)
+        self.panneau.modifie.connect(self._contexte_son)
+
+        # Deux onglets : l'image d'un côté, le son de l'autre. Ils partagent la
+        # norme et le canal — il n'y a qu'une porteuse image et qu'un bruit —
+        # mais rien d'autre, et les mêler dans un seul panneau le rendait
+        # interminable.
+        self.onglet_son = OngletSon()
+        self.reglages = QtWidgets.QTabWidget()
+        self.reglages.addTab(self.panneau, "Image")
+        self.reglages.addTab(self.onglet_son, "Son")
+        self.reglages.setMinimumWidth(360)
 
         self.vues = VueImages()
         self.vues.ligne_choisie.connect(self._sur_ligne)
@@ -104,18 +116,31 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
         vertical.setStretchFactor(1, 2)
 
         horizontal = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        horizontal.addWidget(self.panneau)
+        horizontal.addWidget(self.reglages)
         horizontal.addWidget(vertical)
         horizontal.setStretchFactor(0, 0)
         horizontal.setStretchFactor(1, 1)
         self.setCentralWidget(horizontal)
 
         self._construire_barre_outils()
+        self._contexte_son()
 
         self._etat = QtWidgets.QLabel("Prêt")
         self._occupation = QtWidgets.QLabel("")
         self.statusBar().addWidget(self._etat, 1)
         self.statusBar().addPermanentWidget(self._occupation)
+
+    def _contexte_son(self) -> None:
+        """Transmet à l'onglet Son la norme et le bruit choisis côté image.
+
+        Le bruit n'est pas dupliqué : il n'y a qu'un canal, et c'est le réglage
+        de l'image qui en décide pour les deux voies. C'est précisément ce que
+        l'onglet Son sert à montrer.
+        """
+        canal = self.panneau.parametres().canal
+        self.onglet_son.definir_contexte(
+            self.panneau.code_norme(), canal.rapport_signal_bruit
+        )
 
     def _construire_barre_outils(self) -> None:
         barre = self.addToolBar("Source")

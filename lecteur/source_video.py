@@ -31,6 +31,9 @@ import numpy as np
 import sounddevice as sd
 from PyQt5 import QtCore
 
+from tvcolor.constantes import obtenir_norme
+from tvcolor.son import ChaineSon, ParametresSon
+
 TAUX_SORTIE = 48000
 CANAUX = 2
 IMAGES_EN_AVANCE = 8
@@ -81,6 +84,18 @@ class SourceVideo(QtCore.QObject):
         self._boucle = True
         self._volume = 0.8
         self._muet = False
+
+        self._chaine_son: ChaineSon | None = None
+        self._parametres_son = ParametresSon(actif=False)
+        self._norme_son = "PAL-BG"
+        self._verrou_son = threading.Lock()
+        self._niveau_video = 0.5
+        """Niveau vidéo moyen de la dernière image présentée.
+
+        Il alimente le ronflement intercarrier, qui n'est pas un bruit de fond
+        constant : c'est la modulation de la porteuse image qui le fabrique, et
+        il monte donc avec la luminosité de l'image. Un générique blanc faisait
+        ronfler les postes mal réglés, un fondu au noir les faisait taire."""
 
         self._verrou = threading.Lock()
         self._file_video: deque = deque()
@@ -232,10 +247,55 @@ class SourceVideo(QtCore.QObject):
         self._boucle = bool(actif)
 
     def definir_volume(self, volume: float) -> None:
-        self._volume = float(np.clip(volume, 0.0, 1.5))
+        self._volume = float(np.clip(volume, 0.0, 2.0))
 
     def definir_muet(self, muet: bool) -> None:
         self._muet = bool(muet)
+
+    def definir_son_tv(self, norme: str, parametres: ParametresSon) -> None:
+        """Règle la voie son : la norme dont on emprunte la porteuse, et le reste.
+
+        La chaîne n'est reconstruite que si la norme change vraiment. La
+        reconstruire à chaque mouvement de curseur remettrait à zéro l'état de
+        ses filtres et la phase de son modulateur, et l'on entendrait un
+        claquement à chaque cran — le contraire de ce qu'on cherche à régler.
+        """
+        with self._verrou_son:
+            self._parametres_son = parametres
+            if parametres.actif and self._chaine_son is None or norme != self._norme_son:
+                self._norme_son = norme
+                self._chaine_son = (
+                    ChaineSon(obtenir_norme(norme), TAUX_SORTIE, parametres)
+                    if parametres.actif
+                    else None
+                )
+            elif self._chaine_son is not None:
+                self._chaine_son.parametres = parametres
+            if not parametres.actif:
+                self._chaine_son = None
+
+    def description_son(self) -> str:
+        with self._verrou_son:
+            return self._chaine_son.description() if self._chaine_son else ""
+
+    def _passer_par_la_porteuse(self, bloc: np.ndarray) -> np.ndarray:
+        """Fait subir au son le voyage que lui imposait la porteuse de la norme.
+
+        Le traitement a lieu dans le fil de décodage, jamais dans le rappel de
+        la carte son : celui-ci doit rendre la main en quelques centaines de
+        microsecondes, et la modulation-démodulation en demande davantage.
+
+        La sortie est monophonique — c'est ce que transportait la porteuse — et
+        on la recopie sur les deux canaux, faute de quoi le son sortirait d'un
+        seul haut-parleur.
+        """
+        with self._verrou_son:
+            chaine = self._chaine_son
+            if chaine is None:
+                return bloc
+            chaine.parametres.niveau_video = self._niveau_video
+            mono = chaine.traiter(bloc)
+        return np.repeat(mono[:, None], CANAUX, axis=1).astype(np.float32)
 
     @property
     def son_actif(self) -> bool:
@@ -416,6 +476,12 @@ class SourceVideo(QtCore.QObject):
         with self._verrou_audio:
             self._file_audio.clear()
             self._audio_en_file = 0.0
+        # La chaîne son porte l'état de ses filtres et la phase de son
+        # modulateur : après un saut, ils décrivent un morceau de son qui n'a
+        # plus rien à voir avec celui qui arrive.
+        with self._verrou_son:
+            if self._chaine_son is not None:
+                self._chaine_son.reinitialiser()
         self._rattrapage = secondes
         self._recaler_horloge(secondes)
         self.position_changee.emit(secondes)
@@ -461,6 +527,7 @@ class SourceVideo(QtCore.QObject):
                 elif self._reechantillonneur is not None:
                     for morceau in self._reechantillonneur.resample(trame):
                         bloc = morceau.to_ndarray().reshape(-1, CANAUX)
+                        bloc = self._passer_par_la_porteuse(bloc)
                         with self._verrou_audio:
                             self._file_audio.append((pts, bloc))
                             self._audio_en_file += len(bloc) / TAUX_SORTIE
@@ -478,6 +545,12 @@ class SourceVideo(QtCore.QObject):
         # les intermédiaires ne ferait qu'aggraver le retard sans rien montrer.
         if derniere is None:
             return
+        # Niveau vidéo moyen, pour le ronflement intercarrier. Un pixel sur
+        # seize dans chaque direction suffit largement : on cherche une moyenne
+        # d'image, pas un détail.
+        image = derniere[1]
+        self._niveau_video = float(image[::16, ::16].mean()) / 255.0
+
         try:
             self.image_prete.emit(derniere[1])
             self.position_changee.emit(derniere[0])
