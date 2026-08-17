@@ -23,6 +23,7 @@ from . import colorimetrie as col
 from . import decodeur as dec
 from . import encodeur as enc
 from . import filtres
+from . import vhs as vhs_mod
 from .constantes import Norme, obtenir_norme
 
 
@@ -34,6 +35,13 @@ class Parametres:
 
     encodage: enc.ParametresEncodage = field(default_factory=enc.ParametresEncodage)
     canal: canal_mod.ParametresCanal = field(default_factory=canal_mod.ParametresCanal)
+    vhs: vhs_mod.ParametresVHS = field(default_factory=vhs_mod.ParametresVHS)
+    """Passage par un magnétoscope, entre le canal et le téléviseur.
+
+    La place n'est pas arbitraire : on enregistre ce qui sort de l'antenne, et
+    l'on rebranche la cassette sur la prise du téléviseur. Le magnétoscope
+    hérite donc du bruit du canal, et y ajoute le sien."""
+
     decodage: dec.ParametresDecodage = field(default_factory=dec.ParametresDecodage)
 
     primaires_source: str = "bt709"
@@ -118,6 +126,7 @@ def encoder_decoder(image_srgb: np.ndarray, params: Parametres | None = None) ->
     # ---- codage, transmission, décodage ------------------------------------
     signal = enc.encoder(rgb_prime, norme, params.encodage)
     recu = canal_mod.traverser(signal.composite, norme, params.canal)
+    recu = vhs_mod.enregistrer_et_relire(recu, norme, params.vhs)
     decodee = dec.decoder(recu, signal, params.decodage)
 
     # ---- retour : du R'G'B' reçu à l'image affichée ------------------------
