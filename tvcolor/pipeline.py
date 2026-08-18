@@ -73,6 +73,20 @@ class Parametres:
     taille_sortie: tuple[int, int] | None = None
     """(hauteur, largeur) de l'image rendue. Par défaut, celle de l'entrée."""
 
+    perturbation: np.ndarray | None = None
+    """Onde ajoutée au composite, à la sortie du codeur.
+
+    Sa place n'est pas arbitraire : c'est **exactement là qu'un brouilleur
+    agit**, entre l'émetteur et le récepteur. Tout ce qui suit — canal,
+    magnétoscope, séparation Y/C, démodulation — la traite comme du signal, et
+    en fait ce qu'elle en fait. Les barres, les damiers et la couleur qu'on
+    obtient ne sont donc pas dessinés : ils sont déduits du rapport entre la
+    fréquence de l'intrus et celle du balayage.
+
+    C'est ce dont se sert `arty`, qui y écrit une pile d'opérateurs à modulation
+    de fréquence. La forme attendue est celle du composite complet, suppression
+    comprise : (lignes actives, échantillons de ligne totale)."""
+
 
 @dataclass
 class Resultat:
@@ -134,7 +148,15 @@ def encoder_decoder(image_srgb: np.ndarray, params: Parametres | None = None) ->
 
     # ---- codage, transmission, décodage ------------------------------------
     signal = enc.encoder(rgb_prime, norme, params.encodage)
-    recu = canal_mod.traverser(signal.composite, norme, params.canal)
+    emis = signal.composite
+    if params.perturbation is not None:
+        onde = np.asarray(params.perturbation, dtype=np.float64)
+        if onde.shape != emis.shape:
+            raise ValueError(
+                f"perturbation de forme {onde.shape}, attendue {emis.shape}"
+            )
+        emis = emis + onde
+    recu = canal_mod.traverser(emis, norme, params.canal)
     recu = vhs_mod.enregistrer_et_relire(recu, norme, params.vhs)
     decodee = dec.decoder(recu, signal, params.decodage)
 
@@ -175,7 +197,7 @@ def encoder_decoder(image_srgb: np.ndarray, params: Parametres | None = None) ->
         norme=norme,
         parametres=params,
         signal=signal,
-        composite_emis=signal.composite,
+        composite_emis=emis,
         composite_recu=recu,
         decodee=decodee,
         rgb_prime_source=rgb_prime,

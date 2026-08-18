@@ -3434,6 +3434,7 @@ tvcolor/          la bibliothèque de simulation (numpy pur, sans Qt)
   mesures.py        vectorscope, spectres, ΔE, résolutions
   son.py            la voie son : porteuse, modulation, canal (chapitre 13)
   vhs.py            le magnétoscope : color-under, gigue (chapitre 14)
+  tube.py           la caméra à tubes : rémanence, comète (chapitre 15)
 
 shaders/          la même chaîne en GLSL (chapitre 12)
   sommet.vert       le triangle plein écran, sans tampon de sommets
@@ -3445,6 +3446,20 @@ shaders/          la même chaîne en GLSL (chapitre 12)
   bloom.glsl        halation et épanouissement du faisceau
   presentation.frag courbure, réponse du tube, lignes de balayage
   vhs.glsl          le magnétoscope, en une passe (chapitre 14)
+  tube.glsl         la caméra — la seule passe à garder un état (chapitre 15)
+
+radio/            le simulateur radio, hors sujet du cours mais même méthode
+  services.py       la table des sept services et leurs constantes
+  modulation.py     AM, FM, BLU — modulateurs et démodulateurs
+  canal.py          bruit, évanouissement, parasites, stations voisines
+  chaine.py         l'enchaînement complet, en flux
+  source_audio.py   décodage des fichiers, export WAV et MP3
+  app.py            la fenêtre
+
+arty/             l'injection d'un son dans l'onde de l'image
+  dx7.py            six opérateurs à modulation de fréquence, et leur matrice
+  injection.py      la base de temps du balayage, et la prédiction du motif
+  app.py            la fenêtre
 
 lecteur/          le lecteur vidéo temps réel (PyQt5 + OpenGL)
   normes_gl.py      les normes traduites en noyaux et en uniformes
@@ -3455,7 +3470,7 @@ lecteur/          le lecteur vidéo temps réel (PyQt5 + OpenGL)
   app.py            la fenêtre et ses réglages, en onglets Image et Son
 
 gui/              l'interface PyQt5 d'analyse d'une image fixe
-tests/            152 tests, dont ceux cités tout au long de ce cours
+tests/            300 tests, dont ceux cités tout au long de ce cours
 docs/             ce document et son générateur de figures
 ```
 
@@ -3469,6 +3484,13 @@ python -m gui
 
 ```bash
 python -m lecteur ma_video.mp4
+```
+
+**Lancer le simulateur radio, ou l'injection sonore :**
+
+```bash
+python -m radio ma_musique.mp3
+python -m arty ma_photo.png
 ```
 
 **Régénérer toutes les figures :**

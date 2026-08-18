@@ -7,6 +7,7 @@ rem
 rem    (rien)     lance le banc de mesure (interface d'analyse d'images)
 rem    video      lance le lecteur video temps reel sur GPU
 rem    radio      lance le simulateur radio (AM, FM, BLU)
+rem    arty       lance l'injecteur de son dans l'onde de l'image
 rem    tests      execute la suite de verification
 rem    figures    regenere les figures du cours
 rem    html       reconstruit la page HTML du cours
@@ -48,6 +49,7 @@ if /i "%CMD%"=="mesure"   goto :mesure
 if /i "%CMD%"=="gui"      goto :mesure
 if /i "%CMD%"=="video"    goto :video
 if /i "%CMD%"=="radio"    goto :radio
+if /i "%CMD%"=="arty"     goto :arty
 if /i "%CMD%"=="lecteur"  goto :video
 if /i "%CMD%"=="tests"    goto :tests
 if /i "%CMD%"=="test"     goto :tests
@@ -123,6 +125,27 @@ echo.
 goto :fin
 
 rem =========================================================================
+:arty
+call :verifier_dependances
+if errorlevel 1 goto :fin
+%PY% -c "import pyqtgraph" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   Il manque une dependance de l'injecteur Arty.
+    echo   Il lui faut pyqtgraph, pour la forme d'onde et le spectre.
+    echo   Lancez :  run.bat install
+    echo.
+    set "ERREUR=1"
+    goto :fin
+)
+echo.
+echo   Arty - six operateurs a modulation de frequence, injectes dans
+echo   l'onde du composite. L'encadre predit le motif avant de le tracer.
+echo.
+%PY% -m arty %2 %3 %4
+goto :fin
+
+rem =========================================================================
 :tests
 call :verifier_dependances
 if errorlevel 1 goto :fin
@@ -187,7 +210,8 @@ echo                         instruments (oscilloscope, vectorscope, spectre)
 echo     tv.bat              lecteur video temps reel, code sur GPU
 echo     tv.bat film.mp4     ouvre directement ce fichier
 echo     radio.bat           simulateur radio : AM, FM, CB, talkie, VHF
-echo                         (run.bat video et run.bat radio font pareil)
+echo     arty.bat            injecte un son dans l'onde de l'image
+echo                         (run.bat video, radio et arty font pareil)
 echo.
 echo     run.bat tests       execute la suite de verification
 echo     run.bat figures     regenere les figures du cours

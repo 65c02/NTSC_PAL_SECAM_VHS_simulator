@@ -29,17 +29,18 @@ années soixante-dix.
 pip install -r requirements.txt
 ```
 
-Trois applications, trois usages :
+Quatre applications, quatre usages :
 
 ```bash
 run.bat     # banc de mesure : une image fixe, les instruments
 tv.bat      # lecteur vidéo temps réel, codage sur GPU
 radio.bat   # simulateur radio : AM, FM, CB, talkie, VHF marine et aéro
+arty.bat    # injecte un son dans l'onde de l'image, et regarde ce qu'il devient
 ```
 
-`tv.bat` et `radio.bat` acceptent qu'on **glisse un fichier sur leur icône**.
-Sans passer par les lanceurs : `python -m gui`, `python -m lecteur`,
-`python -m radio`.
+`tv.bat`, `radio.bat` et `arty.bat` acceptent qu'on **glisse un fichier sur leur
+icône**. Sans passer par les lanceurs : `python -m gui`, `python -m lecteur`,
+`python -m radio`, `python -m arty`.
 
 ---
 
@@ -286,6 +287,59 @@ s'éteint vite. La case se décoche, et l'écart est saisissant.
 L'export se fait en WAV ou en MP3 (`Ctrl+E`). Le détail de la chaîne, les
 tableaux de mesure et la liste de ce qui **n'est pas** simulé sont dans
 [`docs/radio.md`](docs/radio.md).
+
+---
+
+## Écrire du son dans l'image
+
+Un composite est une onde ; une pile d'opérateurs à modulation de fréquence —
+celle d'un DX7 — en est une autre. Arty additionne la seconde à la première,
+exactement là où un brouilleur agirait, entre le codeur et le canal.
+
+```bash
+arty.bat "C:\images\photo.png"   # ou rien du tout : il s'ouvre sur une mire
+```
+
+Rien n'est dessiné. Le motif qu'on voit est **déduit** par le décodeur du
+téléviseur, à partir du seul rapport entre la fréquence du son et celle du
+balayage — parce qu'un composite est un signal à une dimension, et que le
+tableau à deux dimensions n'en est qu'un pliage : l'échantillon `k` de la ligne
+`n` sort à l'instant `n / f_ligne + k / f_échantillonnage`.
+
+| `f / f_ligne` | avance par ligne | ce qu'on voit |
+|---|---|---|
+| entier | 0° | barres verticales **immobiles** |
+| demi-entier | 180° | damier, une ligne sur deux inversée |
+| quelconque | le reste | barres **penchées**, d'autant plus que le reste est grand |
+| près de `f_sc` | — | de la **couleur** : le décodeur y voit de la chrominance |
+
+Les trois premiers cas sont vérifiés par la mesure : à 8 `f_ligne`, deux lignes
+voisines de la perturbation sont identiques à 10⁻⁹ près ; à 8,5, elles sont
+exactement opposées ; et le nombre d'alternances comptées sur une ligne vaut
+`f / f_ligne` à une barre près. Le quatrième est le plus spectaculaire — près de
+la sous-porteuse, une mire en niveaux de gris se met à teinter toute seule.
+Sous la bande de chrominance il n'en sort rien du tout — 7·10⁻¹⁴ de saturation
+moyenne à 600 kHz, c'est-à-dire le bruit de calcul ; puis 0,017 à 300 kHz de la
+sous-porteuse, et 0,085 dessus. C'est le cross-color du chapitre 10, provoqué
+exprès.
+
+Six opérateurs, chacun avec son rapport de fréquence, son niveau, son désaccord,
+sa rétroaction et son enveloppe à quatre segments ; cinq agencements (additif,
+chaîne, deux piles, éventail, cloche) posés dans une matrice de modulation 6 × 6.
+Monter l'indice ouvre l'éventail des harmoniques — les raies `f_p ± k·f_m` en
+`J_k(β)` — et fait passer d'une barre franche à une texture fine.
+
+Et l'enveloppe se lit **de haut en bas** : une trame dure vingt millisecondes,
+donc l'axe du temps de l'enveloppe *est* la hauteur de l'image. Une attaque de
+deux millisecondes, c'est le dixième supérieur de la trame.
+
+**Le son n'est pas touché.** La voie audio a sa propre porteuse, plusieurs
+mégahertz plus haut ; un test fait passer le même signal par la chaîne son avant
+et après un rendu à niveau maximal, et exige le bit près. Le bouton « exporter
+la voix » écrit un WAV : la même pile d'opérateurs, transposée à 110 Hz pour
+être audible — littéralement le son qu'on est en train de regarder. Le détail,
+les mesures et ce qui **n'est pas** repris du DX7 sont dans
+[`docs/arty.md`](docs/arty.md).
 
 ---
 
@@ -638,7 +692,7 @@ tvcolor/          bibliothèque de simulation (numpy pur)
   vhs.py            le magnétoscope : color-under, gigue, pertes de signal
   son.py            la voie son : porteuse, FM, accentuations, intercarrier
   pipeline.py       la chaîne complète
-  mires.py          les neuf mires de test
+  mires.py          les douze mires de test, dont TDF, Test Card F et NHK
   mesures.py        vectorscope, spectres, ΔE*ab, résolutions
 
 shaders/          les trois shaders GLSL, un par norme
@@ -661,6 +715,11 @@ radio/            le simulateur radio (numpy pur, sauf l'interface)
   source_audio.py   décodage des fichiers, export WAV et MP3
   app.py            la fenêtre
 
+arty/             l'injection sonore dans l'onde de l'image
+  dx7.py            six opérateurs à modulation de fréquence, et leur matrice
+  injection.py      la base de temps du balayage, et la prédiction du motif
+  app.py            la fenêtre
+
 lecteur/          le lecteur vidéo temps réel
   normes_gl.py      traduction des normes en uniformes, conception des noyaux
   gl_util.py        compilation, cibles de rendu, quad plein écran
@@ -670,7 +729,7 @@ lecteur/          le lecteur vidéo temps réel
 
 gui/              le banc de mesure PyQt5
 docs/             le cours, ses vingt-cinq figures, et leurs générateurs
-tests/            152 tests
+tests/            300 tests
 ```
 
 ---
@@ -681,10 +740,10 @@ tests/            152 tests
 run.bat tests        # ou : python -m pytest tests/ -v
 ```
 
-277 tests : 23 sur le matriçage et la colorimétrie, 16 sur l'horloge de
+300 tests : 23 sur le matriçage et la colorimétrie, 16 sur l'horloge de
 sous-porteuse, 19 sur la chaîne complète, 34 sur les shaders, 31 sur le son,
-37 sur la caméra, 21 sur le magnétoscope, 37 sur la radio, 46 sur les mires et
-13 sur l'export. Ils ne se contentent pas de vérifier que le code s'exécute — ils contrôlent les
+37 sur la caméra, 21 sur le magnétoscope, 37 sur la radio, 23 sur l'injection
+sonore, 46 sur les mires et 13 sur l'export. Ils ne se contentent pas de vérifier que le code s'exécute — ils contrôlent les
 **propriétés physiques** dont tout le reste découle :
 
 - les coefficients 0,299 / 0,587 / 0,114 sont recalculés depuis les primaires
@@ -713,6 +772,10 @@ Si un artefact n'apparaissait pas, ce serait la simulation qui aurait tort.
 run.bat                banc de mesure
 tv.bat [film.mp4]      lecteur vidéo
 run.bat video [f.mp4]  synonyme du précédent
+radio.bat [son.mp3]    simulateur radio
+run.bat radio [s.mp3]  synonyme du précédent
+arty.bat [image.png]   injection sonore dans l'onde de l'image
+run.bat arty [i.png]   synonyme du précédent
 run.bat tests          suite de vérification
 run.bat figures        régénère les figures du cours
 run.bat html           reconstruit docs/cours.html
