@@ -6,6 +6,7 @@ rem  Usage :   run.bat [commande] [argument]
 rem
 rem    (rien)     lance le banc de mesure (interface d'analyse d'images)
 rem    video      lance le lecteur video temps reel sur GPU
+rem    radio      lance le simulateur radio (AM, FM, BLU)
 rem    tests      execute la suite de verification
 rem    figures    regenere les figures du cours
 rem    html       reconstruit la page HTML du cours
@@ -46,6 +47,7 @@ if "%CMD%"=="" set "CMD=mesure"
 if /i "%CMD%"=="mesure"   goto :mesure
 if /i "%CMD%"=="gui"      goto :mesure
 if /i "%CMD%"=="video"    goto :video
+if /i "%CMD%"=="radio"    goto :radio
 if /i "%CMD%"=="lecteur"  goto :video
 if /i "%CMD%"=="tests"    goto :tests
 if /i "%CMD%"=="test"     goto :tests
@@ -97,6 +99,27 @@ echo   Lecteur video — Ctrl+O pour ouvrir un fichier, 1/2/3 pour changer
 echo   de norme, Espace pour lire ou mettre en pause, F11 pour le plein ecran.
 echo.
 %PY% -m lecteur %2 %3 %4
+goto :fin
+
+rem =========================================================================
+:radio
+call :verifier_dependances
+if errorlevel 1 goto :fin
+%PY% -c "import pyqtgraph, av, sounddevice" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   Il manque une dependance du simulateur radio.
+    echo   Il lui faut pyqtgraph, av (PyAV) et sounddevice.
+    echo   Lancez :  run.bat install
+    echo.
+    set "ERREUR=1"
+    goto :fin
+)
+echo.
+echo   Simulateur radio - Ctrl+O pour ouvrir un fichier audio,
+echo   menu Service pour choisir la radio, Ctrl+E pour exporter.
+echo.
+%PY% -m radio %2 %3 %4
 goto :fin
 
 rem =========================================================================
@@ -159,16 +182,18 @@ rem =========================================================================
 echo.
 echo   Simulateur de codage couleur NTSC / PAL / SECAM
 echo.
-echo     run.bat            banc de mesure : une image, trois normes, les
-echo                        instruments (oscilloscope, vectorscope, spectre)
-echo     run.bat video      lecteur video temps reel, code sur GPU
-echo     run.bat video x.mp4  ouvre directement ce fichier
+echo     run.bat             banc de mesure : une image, trois normes, les
+echo                         instruments (oscilloscope, vectorscope, spectre)
+echo     tv.bat              lecteur video temps reel, code sur GPU
+echo     tv.bat film.mp4     ouvre directement ce fichier
+echo     radio.bat           simulateur radio : AM, FM, CB, talkie, VHF
+echo                         (run.bat video et run.bat radio font pareil)
 echo.
-echo     run.bat tests      execute la suite de verification (76 tests)
-echo     run.bat figures    regenere les figures du cours
-echo     run.bat html       reconstruit docs\cours.html
-echo     run.bat tout       figures + html + tests
-echo     run.bat install    installe les dependances
+echo     run.bat tests       execute la suite de verification
+echo     run.bat figures     regenere les figures du cours
+echo     run.bat html        reconstruit docs\cours.html
+echo     run.bat tout        figures + html + tests
+echo     run.bat install     installe les dependances
 echo.
 echo   Le cours se lit dans docs\cours.md ou docs\cours.html
 echo.

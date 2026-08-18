@@ -6,7 +6,7 @@ rem  Trois facons de s'en servir :
 rem
 rem    - double-cliquer sur ce fichier, puis Ctrl+O dans l'application ;
 rem    - GLISSER UN FICHIER VIDEO SUR CETTE ICONE : il s'ouvre directement ;
-rem    - en ligne de commande :  play_video.bat "C:\films\mon_film.mp4"
+rem    - en ligne de commande :  tv.bat "C:\films\mon_film.mp4"
 rem
 rem  Une fois l'application ouverte :
 rem    Espace  lire / pause          1 2 3   NTSC / PAL / SECAM, sans coupure
