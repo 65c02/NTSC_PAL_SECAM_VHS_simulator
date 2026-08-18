@@ -31,7 +31,8 @@ le test qui le contrôle.
 12. [Les shaders : la même chaîne, en temps réel](#12-les-shaders--la-même-chaîne-en-temps-réel)
 13. [Le son : l'autre porteuse](#13-le-son--lautre-porteuse)
 14. [La cassette : ce qu'un magnétoscope fait au signal](#14-la-cassette--ce-quun-magnétoscope-fait-au-signal)
-15. [Annexes](#15-annexes)
+15. [La caméra : la queue de comète](#15-la-caméra--la-queue-de-comète)
+16. [Annexes](#16-annexes)
 
 ---
 
@@ -2341,7 +2342,947 @@ noyaux longs — et l'on reste à plus de deux mille images par seconde.
 
 ---
 
-## 15. Annexes
+## 15. La caméra : la queue de comète
+
+Tout ce qui précède part d'une image parfaite. Le codeur reçoit un R'G'B' idéal
+et l'on mesure ce que la transmission lui fait. Dans les années soixante-dix
+cette image sortait d'un **tube analyseur**, et le tube laissait sa signature
+avant même que le codeur n'existe.
+
+La plus voyante de ces signatures, tout le monde l'a vue sans forcément savoir
+ce qu'elle était : dans une émission musicale en direct, les reflets sur les
+cymbales, sur le chrome des pieds de micro, sur le vernis d'une guitare
+laissaient de **grandes traînées blanches** quand ils se déplaçaient. Ce n'est
+pas un flou de bougé, et ce n'est pas non plus de la rémanence ordinaire. Cela
+s'appelle une **queue de comète**, et cela se déduit du fonctionnement du tube
+en trois lignes de calcul.
+
+### 15.1 Ce qu'un tube analyseur mesure vraiment
+
+Une cible photoconductrice — de l'oxyde de plomb pour le Plumbicon de Philips,
+qui équipait l'essentiel des cars de reportage européens — est portée à
+quelques dizaines de volts par sa face avant, transparente. L'objectif y
+projette l'image. Là où la lumière tombe, le photoconducteur devient conducteur
+et la face arrière se **décharge** localement, proportionnellement à
+l'éclairement et à la durée de pose.
+
+Un faisceau d'électrons balaie ensuite cette face arrière et y redépose les
+électrons manquants, ramenant chaque point au potentiel de la cathode.
+
+> **Le courant qu'il faut au faisceau pour faire cela EST le signal vidéo.**
+
+Il n'y a pas de conversion intermédiaire, pas de photodiode, pas de
+convertisseur. On mesure directement la charge que l'image a soutirée. Cette
+phrase est toute la physique du chapitre, et les deux défauts qui suivent en
+découlent mécaniquement.
+
+### 15.2 Premier défaut : le faisceau a un débit maximal
+
+Le courant du faisceau est réglé en atelier pour évacuer le blanc de référence
+avec une marge — environ 130 %. C'était un arbitrage d'exploitation, et non une
+paresse : monter le courant grossit le spot et ramollit l'image. On donnait donc
+au faisceau ce qu'il fallait pour un blanc un peu chaud, pas davantage.
+
+Or un **reflet spéculaire** n'est pas un blanc un peu chaud. Une surface
+diffuse ne renvoie jamais plus de lumière qu'elle n'en reçoit, et l'exposition
+la place au blanc de référence. Un reflet, lui, est l'image de la source
+elle-même : le filament d'un projecteur de deux kilowatts, vu dans du chrome
+poli. Il dépasse le blanc de **vingt à cinquante fois**.
+
+Le faisceau n'y peut rien. Il évacue sa tranche, toujours la même, et laisse le
+reste. Il lui faut donc autant de trames que le rapport de dépassement :
+
+$$N_{\text{trames}} = \frac{L}{c}$$
+
+où $L$ est l'éclairement du reflet et $c$ la capacité du faisceau, tous deux en
+blancs de référence. Pendant ces trames, le reflet s'est déplacé. La charge
+restée en arrière se relit trame après trame — **au maximum que le faisceau
+sait fournir**, c'est-à-dire au blanc écrêté.
+
+*(Cette formule est incomplète, et le §15.3 dira pourquoi : la cible sature, et
+$L$ y est plafonné. Elle suffit pour l'instant à comprendre le mécanisme.)*
+
+Trois propriétés en découlent, et toutes trois se vérifient à l'œil sur un
+enregistrement d'époque :
+
+- la traînée est **d'un blanc plat**. Pas un dégradé : un aplat à 100 %,
+  mesuré à 1,000 sur 89 % de sa longueur, et à 0,988 sur les cinq derniers
+  pixels — le tout dernier pas du faisceau, qui rattrape enfin la charge
+  restante. Un pour-cent : invisible ;
+- **l'image disparaît derrière elle**. Le faisceau donnant déjà tout, ce qui
+  s'ajoute à la cible ne se lit pas ;
+- elle **s'arrête net**. Une décroissance exponentielle s'éteint en fondu ;
+  celle-ci est arithmétique — une tranche fixe par trame — et se termine d'un
+  pixel à l'autre.
+
+C'est le troisième point qui trahit une queue de comète. Un flou de bougé, une
+rémanence, une persistance d'écran : tout cela s'éteint doucement. Une comète a
+un bout franc.
+
+Une quatrième propriété s'ajoute, qu'on n'a pas cherchée : **la traînée change
+de couleur sur sa longueur**. Une caméra a trois tubes, et un reflet de
+projecteur à incandescence ne les charge pas également. Mesuré sur un reflet à
+(1,00 ; 0,92 ; 0,74) :
+
+| | tube rouge | tube vert | tube bleu |
+|---|---|---|---|
+| niveau dans le fichier | 1,000 | 0,981 | 0,950 |
+| charge stockée | 10,0 (saturée) | 4,1 | 0,95 |
+| longueur de traînée | 35 px | 24 px | 5 px |
+
+La traînée sort donc blanche sur quelques pixels, **jaune ensuite, et rouge sur
+la pointe**. Rien de tout cela n'est peint : c'est la même équation appliquée
+trois fois, une par tube.
+`tests/test_tube.py::test_la_trainee_change_de_couleur_sur_sa_longueur`.
+
+**Mais il y faut un reflet dont les canaux ne soient pas tous écrêtés
+ensemble**, et c'est une limite qu'il vaut mieux énoncer tout de suite : un
+fichier où les trois canaux sont à 255 ne dit rien de leurs proportions réelles,
+et la traînée y sort blanche. Le §15.6 y revient.
+
+![La queue de comète d'une caméra à tubes](figures/24_camera.png)
+
+### 15.3 La cible sature, et c'est ce qui borne tout
+
+Ce qui précède décrit une cible qui accumulerait indéfiniment. Elle ne le peut
+pas, et l'oublier ruine tout le chapitre.
+
+Le faisceau maintient la face arrière au potentiel de la cathode ; la lumière la
+fait remonter vers celui de la face avant, et **elle ne peut pas aller plus
+loin**. Une fois le point entièrement déchargé, l'éclairement supplémentaire ne
+dépose plus rien. Il y a donc une charge maximale $q_{\max}$ :
+
+$$q = \min\big(q_{\text{reste}} + L + b,\ q_{\max}\big)$$
+
+La première version de ce simulateur n'avait pas cette borne, et le résultat
+était spectaculairement faux. Mesuré : un reflet à vingt-cinq fois le blanc
+**resté quarante trames dans le champ** — moins d'une seconde — avait accumulé
+989 unités de charge, de quoi traîner **plus de quinze secondes** derrière lui.
+
+| trames passées dans le champ | charge accumulée | traînée qui en résulte |
+|---|---|---|
+| 1 | 24,7 | 0,4 s |
+| 5 | 123,6 | 1,9 s |
+| 40 | 988,8 | 15,2 s |
+
+Aucune caméra n'a jamais fait cela. C'est le genre de faute qui ne se voit pas
+sur une mesure faite en trames — la traînée d'un reflet *qui passe* était
+correcte — et qui saute aux yeux dès qu'on regarde une vidéo à la montre.
+
+#### D'où vient $q_{\max}$
+
+À un ordre de grandeur près, et pas davantage :
+
+| grandeur | valeur d'exploitation |
+|---|---|
+| potentiel de la face avant | 45 V |
+| courant de signal au blanc | 300 nA |
+| capacité de la cible | 1,3 nF |
+| durée d'une trame | 20 ms |
+
+Le blanc de référence dépose $300\ \text{nA} \times 20\ \text{ms} = 6$ nC par
+trame, soit $6\ \text{nC} / 1{,}3\ \text{nF} = 4{,}6$ V d'excursion ; et
+$45 / 4{,}6 = 9{,}8$, soit une dizaine de blancs — mais les trois premières
+valeurs sont des points de fonctionnement usuels et non des mesures, et
+l'incertitude sur leur produit est large. **La durée observée des traînées est
+un bien meilleur repère que ce produit**, et c'est elle qui a fixé la valeur
+retenue de 6 : une comète de 3,6 trames, soit 72 millisecondes. C'est dit ainsi
+plutôt que de faire passer une calibration pour une dérivation.
+
+#### Deux conséquences qu'on n'attendait pas
+
+**Un — au-delà de la saturation, un reflet plus brillant ne fait pas une traînée
+plus longue.** Il ne peut pas déposer davantage que ce que la cible retient. La
+durée ne dépend plus que du rapport entre cette capacité et le courant du
+faisceau :
+
+$$N_{\text{trames}} = \frac{q_{\max}}{c}$$
+
+et non plus $L/c$. Un reflet à cinquante fois le blanc et un reflet à cent fois
+donnent exactement la même traînée. C'est ce que vérifie
+`tests/test_tube.py::test_un_reflet_plus_brillant_ne_traine_pas_plus_longtemps`.
+
+**Deux — la traînée d'un reflet chaud est moins colorée qu'on ne l'attendait.**
+Tous les canaux qui dépassent la saturation stockent la *même* charge, et leurs
+traînées ont donc la même longueur ; seuls les canaux restés en dessous se
+distinguent. Sur le reflet de projecteur du §15.2, mesuré en colonnes : le rouge
+tient sur 53 pixels, le vert sur 42, et le bleu — qui ne surcharge pas du tout —
+sur 5. La traînée est donc blanche sur une poignée de pixels, jaune sur les
+quarante suivants, et rouge sur la pointe. Sans saturation, elle aurait été
+rouge sur la moitié de sa longueur : le modèle fautif exagérait aussi la
+couleur.
+
+### 15.4 Second défaut : le faisceau ne décharge jamais tout à fait
+
+Les électrons du faisceau arrivent avec une petite dispersion d'énergie. À
+mesure que le potentiel de la cible se rapproche de celui de la cathode, il en
+reste de moins en moins qui puissent atterrir : la décharge se termine en
+traînant, et il subsiste une fraction $r$ de la charge.
+
+C'est la **rémanence**, et elle a une propriété qu'il faut absolument
+reproduire sous peine de tout fausser : **elle est bien pire dans les bas
+niveaux.** Un petit écart de potentiel se résorbe lentement. On la modélise par
+
+$$r(q) = r_{\max}\,\frac{q_0}{q + q_0}$$
+
+où $q_0$ est le **genou** : la charge à laquelle la rémanence vaut la moitié de
+son maximum. Il vaut 0,10 pour un Plumbicon, et c'est une propriété du tube au
+même titre que $r_{\max}$ — le §15.12 montre que c'est même lui, et non
+$r_{\max}$, qui sépare vraiment un tube d'un autre.
+
+Cela donne, pour $r_{\max} = 0{,}35$ et $q_0 = 0{,}10$ — un Plumbicon — le
+résidu suivant après extinction brutale de la lumière, en pour-cent du niveau
+initial :
+
+| niveau avant extinction | 1ʳᵉ trame | 2ᵉ | 3ᵉ | 4ᵉ |
+|---|---|---|---|---|
+| 100 % du blanc | 2,34 | 0,57 | 0,18 | 0,06 |
+| 50 % | 4,30 | 1,08 | 0,34 | 0,12 |
+| 20 % | 8,69 | 2,29 | 0,73 | 0,25 |
+| 5 % | 18,83 | 5,57 | 1,84 | 0,63 |
+
+La spécification d'un Plumbicon annonçait « moins de 3 % en troisième trame » ;
+un vidicon au sulfure d'antimoine, celui des caméras de surveillance, dépassait
+20 % et rendait tout mouvement illisible. La ligne du bas explique pourquoi les
+plateaux étaient si violemment éclairés, et pourquoi les reportages tournés en
+intérieur sombre traînaient tant.
+
+**La lumière de biais** découle directement de ce tableau. Une petite lampe
+éclaire la cible en permanence de quelques pour-cent du blanc, pour que le
+point de fonctionnement ne descende jamais dans la région paresseuse. Elle ne
+sert à rien d'autre. Mesuré sur un niveau à 5 % du blanc :
+
+| lumière de biais | 1ʳᵉ trame | 2ᵉ | 3ᵉ |
+|---|---|---|---|
+| aucune | 18,8 | 5,6 | 1,8 |
+| 2 % | 13,8 | 2,7 | 0,6 |
+| 5 % | 9,5 | 1,2 | 0,2 |
+| 10 % | 5,8 | 0,4 | 0,0 |
+
+L'étage de niveau du noir de la caméra retire ensuite ce piédestal constant, si
+bien que la lumière de biais ne coûte rien au contraste — seulement un peu de
+bruit, que le simulateur ne modélise pas.
+
+### 15.5 Les quatre lignes de calcul
+
+Avec les charges exprimées en blancs de référence par trame :
+
+$$\begin{aligned}
+q &= \min\big( q_{\text{reste}} + L + b,\ q_{\max} \big) \\
+s &= \min\Big( q\,\big(1 - r(q)\big),\ c \Big) \\
+q_{\text{reste}} &\leftarrow q - s \\
+\text{signal} &= s - b
+\end{aligned}$$
+
+Quatre lignes, et tout ce chapitre est dedans. Deux plafonds, et ils ne disent
+pas la même chose : $q_{\max}$ est ce que la cible **retient**, $c$ ce que le
+faisceau **évacue**. Le premier borne la longueur des traînées, le second leur
+existence.
+
+Et un contrôle qui vaut d'être écrit, parce qu'il garantit tout le reste. Sur
+une scène **fixe** — donc sous saturation, une scène ordinaire ne dépassant pas
+le blanc — le régime établi impose $q_{\text{reste}} = q\,r(q)$, donc
+
+$$s = q - q_{\text{reste}} = L + b \qquad\Longrightarrow\qquad \text{signal} = L$$
+
+**exactement**, et quelle que soit la rémanence. Un tube analyseur ne dégrade
+pas une image immobile ; il ne fait que retarder les changements. Mesuré à
+travers toute la chaîne, sur les barres de couleur en PAL : ΔE\*ab moyen de
+2,51 sans caméra, et 2,51 avec. Pas 2,52. C'est le même critère que pour le
+reste du simulateur — ce qui n'est pas un phénomène simulé doit passer sans
+laisser de trace — et c'est ce que vérifie
+`tests/test_tube.py::test_tube_transparent_sur_image_fixe`.
+
+### 15.6 Rendre aux reflets leur éclairement
+
+Il reste un obstacle, et c'est le seul endroit de ce chapitre où l'on suppose
+quelque chose plutôt que de le calculer. **Un fichier huit bits a déjà été
+écrêté** par celui qui l'a fabriqué : aucun pixel n'y dépasse le blanc. Sans
+rien faire, la cible n'est jamais en surcharge et il n'y a pas la moindre queue
+de comète.
+
+Il faut donc rendre aux reflets l'éclairement qu'ils avaient. Le piège serait
+de le faire sur le niveau seul : un drap blanc est écrêté lui aussi, et il
+partirait en surcharge comme un éclat de chrome. Ce qui les sépare n'est pas
+leur niveau — les deux sont à 100 % dans le fichier — mais **la part du
+voisinage qui est écrêtée avec eux**. Un reflet occupe un centième de son
+voisinage ; un drap, la moitié.
+
+Sur un rayon de 3 % de la hauteur d'image :
+
+| ce qu'on regarde | couverture | amplification |
+|---|---|---|
+| éclat de chrome, 4 pixels | 0,033 | × 1,00 |
+| reflet filiforme sur une corde | 0,092 | × 0,98 |
+| coin d'un aplat blanc | 0,324 | × 0,00 |
+| bord d'un aplat blanc | 0,569 | × 0,00 |
+| centre d'un aplat blanc | 1,000 | × 0,00 |
+
+C'est bien une mesure de forme, et non de niveau : les cinq cas sont tous à
+100 % dans le fichier.
+
+#### Deux corrections, et une plage blanche de trop
+
+Cette porte ne suffisait pas, et c'est une vraie vidéo qui l'a montré : de
+**grandes plages blanches** apparaissaient un peu partout. Mesuré sur une image
+exposée un tiers trop haut — ce que fait n'importe quelle caméra devant un
+ciel — **4,90 % de l'image** partait en surcharge et traînait. On ne parle plus
+de reflets : on parle d'un quart d'écran qui blanchit.
+
+En cherchant *où*, la réponse était nette : 173 taches, de quinze pixels de
+médiane, toutes avec une couverture de 0,125 — c'est-à-dire **en plein dans la
+bande de transition de la porte**. Ce n'étaient pas des reflets spéculaires mais
+des zones ordinaires que l'exposition avait écrêtées.
+
+Deux choses n'allaient pas.
+
+**Un — le seuil était trop bas.** À 0,75, un pixel aux trois quarts du blanc
+était candidat. Un pixel aux trois quarts du blanc n'est pas un reflet
+spéculaire : c'est un mur éclairé. Relevé à 0,94, avec un exposant porté de 3 à
+5, seul ce qui est à un cheveu de l'écrêtage passe.
+
+**Deux — et c'est la vraie faute — le même réglage servait aux deux usages.**
+`seuil_reflets` décidait à la fois de ce qui est *candidat* et de ce qui *compte
+comme voisinage clair*. Relever le seuil pour être plus sévère abaissait donc du
+même coup la couverture mesurée partout, **ouvrait la porte**, et empirait les
+choses. On l'a vu à la mesure avant de le comprendre : à 0,90 avec les deux
+liés, la surcharge montait au lieu de descendre. Séparés, elle tombe.
+
+| réglage | scène chaude | scène normale | vrais éclats gardés |
+|---|---|---|---|
+| 0,75 · exposant 3 (l'ancien) | 4,90 % | 0,22 % | 83 % |
+| 0,90 · exposant 4 | 1,29 % | 0,03 % | 83 % |
+| **0,94 · exposant 5** (retenu) | **0,94 %** | **0,03 %** | **83 %** |
+| 0,98 · exposant 6 | 0,71 % | 0,02 % | 78 % |
+
+Cinq fois moins de surcharge sur une scène chaude, sept fois moins sur une scène
+normale, et l'on garde les mêmes quatre cinquièmes de vrais éclats spéculaires.
+Le reste — les 0,7 % qui subsistent — est irréductible : ce sont des points
+réellement écrêtés et réellement isolés, et rien dans le fichier ne dit s'ils
+étaient du chrome ou une feuille de papier.
+
+#### L'objectif, et le dégradé qui manquait
+
+Cette porte ne suffisait toujours pas, et c'est une **capture d'émission de
+1972** qui l'a montré : un groupe sur scène, éclairage de concert, mouvement
+partout. Ce qu'on y voit est *léger*. Aucune plage blanche. Aucun pixel écrêté.
+Les traînées visibles sont celles du sujet lui-même — un bras, une main — et
+non des comètes.
+
+Le simulateur, lui, produisait des **taches blanches à bords francs**, ce qui
+n'existe nulle part. Deux choses manquaient, et la première est bête : il n'y
+avait pas d'optique.
+
+**Un reflet ne se pose pas sur la cible en carré net.** L'objectif l'étale —
+diffraction, aberrations, et surtout la lumière parasite des huit à quinze
+lentilles d'un zoom de reportage. Ce qui arrive sur la cible est une bosse
+lisse. Sans cet étalement, l'éclairement reconstruit passait de 0,1 à 26 d'un
+pixel au suivant :
+
+| | profil de l'éclairement | pixels saturés | pixels qui traînent |
+|---|---|---|---|
+| sans optique | 0,1 → 26 → 0,1 | 36 | 36, tous de même durée |
+| avec | 0,3 · 2,4 · 8,7 · 10,3 · 6,4 · 1,5 · 0,3 | 4 | 156, de durées échelonnées |
+
+Le dégradé spatial et l'étalement des durées viennent tous deux de là. Et comme
+l'énergie est conservée — c'est un étalement, pas une amplification — le sommet
+retombe : un reflet marginal cesse de saturer, ce qui règle du même coup la
+question de la force de l'effet.
+
+**Une gaussienne seule ne suffit pas.** Elle retombe à rien en trois
+écarts-types, et les flancs de la traînée restaient aussi francs qu'avant. La
+lumière parasite d'un objectif, elle, décroît en raison inverse du carré de la
+distance : elle s'étend sur toute l'image, et c'est elle qui fait le halo autour
+d'une lampe dans un plan. On ajoute donc un **voile** — une seconde gaussienne
+six fois plus large, portant 35 % de l'énergie. Deux gaussiennes ne font pas une
+loi en $1/r^2$, mais elles en ont ce qui compte ici : un cœur étroit et une jupe
+qui va loin.
+
+Coupe verticale à travers un reflet, telle que la carte graphique la rend :
+
+```
+0,06  0,08  0,10  0,16  0,25  0,35  0,62  0,87  1,00 … 1,00  0,88  0,62  0,35  0,15  0,08  0,06
+```
+
+#### L'ordre compte, et l'inverse a coûté une transparence
+
+La porte s'applique à la **source** de la lumière, et l'optique étale ensuite ce
+que ce reflet émet. L'ordre inverse — étaler d'abord, fermer la porte ensuite —
+paraît équivalent et ne l'est pas : l'excès d'une barre blanche, que la porte
+rejetait pourtant en son centre, débordait sur la barre voisine où la porte
+était ouverte. Mesuré sur une mire **immobile** : ΔE\*ab de 2,51 à 3,84, alors
+que rien n'avait bougé.
+
+D'où, sur carte graphique, une passe de plus : l'émission se calcule une fois,
+avec ses seize points de couverture, et la diffusion n'a plus qu'à lire le
+résultat.
+
+#### Et huit satellites autour de chaque reflet
+
+La diffusion, sur carte graphique, a d'abord été écrite comme la couverture :
+une quadrature en couronnes de huit points. Ce qui marche pour un rayon de
+quelques pixels ne marche pas du tout pour un voile de trente-cinq : chaque
+reflet se retrouvait entouré de **huit copies de lui-même**, et une image
+chargée de points brillants donnait des motifs blancs partout. Mesuré, sur un
+cercle au rayon du voile : **973 % d'ondulation angulaire**, entre 0 et 0,12.
+
+La bonne réponse était déjà dans la carte. **Une pyramide de mipmaps EST un flou
+séparable**, calculé par le matériel, et l'échantillonner coûte une lecture au
+lieu de seize. Un niveau de mipmap est cependant une moyenne de *boîte* : sa
+réponse à un point est un carré, et un carré autour de chaque reflet se voit
+aussi. Quatre prises décalées d'un demi-texel de ce niveau transforment la boîte
+en **tente** — lisse, et presque ronde.
+
+| | ondulation à 2 % du rayon | à 3 % | à 6 % | amplitude à 6 % |
+|---|---|---|---|---|
+| couronnes de huit points | — | — | 973 % | 0,1216 |
+| mipmap, une prise | 164 % | 292 % | 71 % | 0,0055 |
+| mipmap, tente à quatre prises | **26 %** | **66 %** | 145 % | **0,0054** |
+
+L'artefact absolu est divisé par vingt-deux. Il reste une ondulation en
+pour-cent aux grands rayons, mais sur une amplitude de cinq millièmes, où plus
+rien ne se voit.
+
+Une boîte de côté $L$ a l'écart-type $L/\sqrt{12}$, et les prises à un demi-texel
+en ajoutent $L/2$ : les variances s'additionnent, et la tente vaut donc $0{,}577\,L$.
+Le niveau de mipmap se déduit de là, et **il faut diviser le côté par deux** —
+sans quoi la carte étale deux fois trop.
+
+#### Ce que la capture de 1972 a fixé
+
+La seconde chose qui manquait était plus simple encore : **l'hypothèse était
+trop généreuse**. Supposer que tout pixel écrêté valait vingt-cinq fois le blanc
+revient à supposer un projecteur dans l'axe partout. Calé sur la capture, le
+réglage par défaut est descendu à **2,5 fois le blanc**. Sur un éclat de chrome
+de douze pixels :
+
+| éclat supposé | cœur blanc | halo dégradé |
+|---|---|---|
+| 25 × | 90 px | 111 px |
+| 6 × | 72 px | 90 px |
+| **2,5 ×** | **26 px** | **108 px** |
+| 1,5 × | 12 px | 118 px |
+
+À 2,5, le cœur fait deux fois le reflet au lieu de huit, et le halo domine.
+Monter ce curseur, c'est supposer un projecteur dans l'axe — ce qui arrivait, et
+donnait alors les comètes spectaculaires du §15.2. Mais ce n'était pas
+l'ordinaire, et le simulateur ne doit pas le prendre pour tel.
+
+#### Ce que la reconstruction ne peut pas savoir
+
+Il faut le dire, parce que cela change une affirmation faite plus haut. Quand
+les **trois canaux** sont à 255 dans le fichier, plus rien ne dit lequel était
+le plus fort dans la scène : le simulateur les amplifie à l'identique, et la
+traînée sort **blanche**. Le dégradé de couleur du §15.2 n'apparaît que si le
+fichier a gardé l'inégalité — un reflet à (1,000 ; 0,981 ; 0,950), par exemple,
+dont seul le rouge est vraiment écrêté.
+
+L'information a été perdue par celui qui a fabriqué le fichier, pas par la
+simulation. C'est la limite de tout ce chapitre, et elle est vérifiée dans les
+deux sens par `tests/test_tube.py`.
+
+### 15.7 Le filé de pose
+
+Une dernière subtilité, qui a coûté un test raté avant d'être vue. Le
+simulateur d'image fixe fabrique lui-même le mouvement : il translate la scène
+de tant de pixels par trame. Si l'on se contente de la déposer à sa nouvelle
+position, la charge saute d'un endroit à l'autre sans rien laisser entre les
+deux, et **la traînée sort pointillée**.
+
+La cible, elle, intègre pendant toute la durée de la trame : le reflet y balaie
+un segment continu. Une moyenne glissante de la longueur du déplacement est
+exactement cette intégrale, et c'est ce que fait `tvcolor.tube._filer`.
+
+Sur carte graphique la question ne se pose pas de la même façon : le mouvement
+vient de la vidéo, et le flou de bougé est celui de la caméra qui l'a tournée.
+Une source de synthèse qui n'en aurait aucun donnerait une traînée pointillée —
+c'est dit dans l'entête du shader plutôt que masqué.
+
+### 15.8 Le circuit anti-comète, et pourquoi l'effet a disparu
+
+Philips a livré l'ACT vers 1975-1976. Le principe est d'une simplicité
+désarmante : **pendant la suppression ligne**, là où le signal n'est de toute
+façon pas utilisé, le faisceau est défocalisé et son courant fortement
+augmenté, le temps d'évacuer l'excès de charge. Le surcroît de bruit et la
+perte de définition qui accompagnent un fort courant n'apparaissent donc jamais
+dans l'image utile.
+
+Le simulateur en fait une capacité supplémentaire, jusqu'à trois cent
+quatre-vingt-onze fois le blanc — l'ordre de grandeur que les circuits réels
+encaissaient. **La loi est quadratique**, et pas par coquetterie : étalée
+linéairement jusque-là, l'échelle aurait fait passer le curseur de 1 à 391 en
+ligne droite, et le premier cran aurait déjà supprimé toute traînée visible. Au
+carré, la course entière sert à quelque chose.
+
+| position du curseur | capacité | encaisse | traînée | en 625 lignes |
+|---|---|---|---|---|
+| 0,00 — aucun anti-comète | 1,3 | 1 × | 3,6 trames | 72 ms |
+| 0,25 | 25,7 | 26 × | 0 | — |
+| 0,40 | 63,7 | 64 × | 0 | — |
+| 0,55 | 119,3 | 119 × | 0 | — |
+| 0,75 | 220,7 | 221 × | 0 | — |
+| 1,00 — ACT complet | 391,3 | 391 × | 0 | — |
+
+La colonne des traînées bascule d'un coup, et c'est la saturation de la cible
+qui le veut : dès que le faisceau évacue plus que les dix blancs que la cible
+retient, il ne reste plus rien à traîner. Le premier cran suffit — ce qui
+correspond bien à ce qu'on observe, l'anti-comète étant un dispositif qui
+marchait ou ne marchait pas, et non un réglage qu'on dosait.
+
+Soixante-douze millisecondes sans anti-comète : pour un objet qui traverse
+l'écran en une seconde, cela fait **7 % de la largeur de l'image**. On comprend
+que cela se soit vu. Et l'on comprend aussi pourquoi les traînées ont disparu
+des émissions à la fin de la décennie sans que personne n'ait changé de tube.
+
+Les autres réglages jouent comme on s'y attend — sauf un, et c'est celui qu'on
+aurait cru le plus déterminant :
+
+| ce qu'on change | traînée | en % de la largeur* |
+|---|---|---|
+| référence : reflet à 25 ×, faisceau 1,30 | 3,6 trames | 7 % |
+| faisceau porté à 2,00 | 2,0 | 4 % |
+| reflet à 50 × le blanc | 3,6 | 7 % |
+| reflet à 100 × le blanc | 3,6 | 7 % |
+| cible deux fois plus capacitive | 8,2 | 16 % |
+
+\* pour un objet qui traverse l'écran en une seconde.
+
+Les deux lignes du milieu ne sont pas une erreur de recopie : **l'éclat du
+reflet ne change rien** au-delà de la saturation, et c'est le §15.3. Ce qui
+allonge une traînée, c'est la capacité de la cible et la faiblesse du faisceau,
+pas la brutalité du projecteur.
+
+### 15.9 Le troisième défaut : trois tubes, trois déviations
+
+Une caméra couleur en avait trois, un par primaire, derrière un prisme
+séparateur. Leurs déviations devaient être réglées l'une sur l'autre au pixel
+près ; le réglage tenait quelques heures puis dérivait avec la température.
+D'où les **liserés colorés** sur les contours, nuls au centre de l'image et
+croissants vers les bords — la signature d'une erreur d'échelle, qui était la
+forme la plus courante du défaut.
+
+Le simulateur la reproduit comme telle : le rouge est agrandi d'un facteur
+$1 + \varepsilon$, le bleu réduit d'autant, le vert servant de référence. Trois
+pixels d'écart au coin de l'image font passer le ΔE\*ab moyen des barres de
+couleur de 2,51 à 3,47.
+
+### 15.10 Ce que cela coûte, mesuré
+
+| | ΔE\*ab moyen |
+|---|---|
+| sans caméra | 2,51 |
+| caméra, scène fixe | 2,51 |
+| caméra, filé de 6 pixels par trame | 4,08 |
+| caméra, désalignement de 3 pixels | 3,47 |
+
+Et la longueur de traînée, prédite puis mesurée sur une ligne du rendu :
+
+| | valeur |
+|---|---|
+| prévue par le modèle (reflet à 25 ×, faisceau 1,30, 6 px/trame) | 22 px + 8 de reflet |
+| mesurée sur le rendu | 37 px |
+| part de la traînée exactement au blanc | 84 % |
+| valeur du pixel qui suit la tête du reflet | 0,000 |
+
+La prédiction est *plus courte* que la mesure, et l'écart s'explique en deux
+termes plutôt que de se ranger sous la rubrique « à peu près ». La formule
+$q_{\max}/c$ compte le plateau saturé, c'est-à-dire les trames où le faisceau
+rend exactement son maximum. S'y ajoutent le filé de pose du §15.7, qui étale
+le reflet du déplacement d'une trame — six pixels — et l'ultime trame où le
+faisceau rattrape enfin la charge restante, en dessous de son maximum : ce sont
+les cinq derniers pixels, à 0,988 au lieu de 1,000. Six plus cinq, plus la
+largeur du reflet : le compte y est.
+
+C'est ce que vérifie, à 25 % près,
+`tests/test_tube.py::test_queue_de_comete_a_la_longueur_prevue`.
+
+### 15.11 Sur carte graphique
+
+Le tube est la **seule passe de ce moteur qui garde un état d'une image à
+l'autre**. La charge résiduelle vit dans une texture, relue à l'image suivante,
+et il en faut donc deux — on ne peut pas lire et écrire la même texture dans
+une même passe. Deux programmes sont compilés depuis le même fichier : l'un
+écrit la charge restante, l'autre le signal lu, et tous deux appellent la même
+fonction `lire()`, parce que deux versions divergentes de cette formule
+feraient dériver la traînée du résidu.
+
+Deux pièges, découverts en mesurant plutôt qu'en regardant.
+
+**L'ordre des deux passes.** Toutes deux lisent la charge que la trame
+*précédente* a laissée. Le signal doit donc être lu **avant** que la charge ne
+soit mise à jour. Dans l'autre ordre l'image sort à peu près juste — et la
+traînée a une trame de moins que ce que le modèle prescrit, ce qui ne se voit
+pas et fausse toute mesure.
+
+**Le nombre de redessins.** Un redimensionnement de fenêtre, un mouvement de
+curseur, un simple passage de souris redéclenchent le rendu. Si la cible se
+déchargeait à chaque redessin, la longueur de la traînée dépendrait de la
+fréquence de rafraîchissement au lieu de dépendre de la scène. La charge
+n'avance donc que lorsqu'une image **réellement nouvelle** se présente, ce qui
+suppose de compter les images reçues séparément du numéro d'image qui sert à la
+phase de sous-porteuse — celui-ci n'avance pas quand l'animation est arrêtée.
+
+S'y ajoute un amorçage : une cible fraîchement allouée est vide, et sa première
+décharge serait incomplète. On lui fait donc poser vingt-quatre trames avant le
+premier affichage. Une vraie caméra a le même défaut à l'allumage ; le
+simulateur ne peut pas se le permettre sur une image arrêtée, où il n'y aura
+jamais de trame suivante pour rattraper.
+
+Enfin, la couverture du voisinage — le critère qui distingue un reflet d'un
+drap blanc — est une intégrale gaussienne dans le simulateur de référence, et
+une quadrature à seize points sur deux couronnes sur carte graphique, chaque
+point étant lu dans un mipmap qui moyenne déjà sa part de l'image.
+
+#### Une trame n'est pas une image
+
+Une dernière faute, du même genre : invisible à la mesure, évidente à la montre.
+
+Une cible se décharge **une fois par trame** — cinquante fois par seconde en 625
+lignes, 59,94 en 525. Une vidéo, elle, arrive à sa propre cadence : 25 images
+par seconde le plus souvent, 24 pour du cinéma, 30 pour une source américaine.
+Une image de vidéo vaut donc **deux trames**, et le moteur temps réel qui
+n'avançait la cible que d'une trame par image reçue faisait durer toutes les
+traînées exactement deux fois trop longtemps.
+
+La correction garde la partie fractionnaire d'une image à l'autre plutôt que de
+l'arrondir à chaque fois — à 24 images par seconde il faut 2,083 trames par
+image, et arrondir à 2 ferait dériver la durée de 4 %. Mesuré après correction,
+sur la même scène et le même reflet :
+
+| cadence de la source | images de traînée | durée |
+|---|---|---|
+| 24 im/s | 4 | 167 ms |
+| 25 im/s | 4 | 160 ms |
+| 30 im/s | 4 | 133 ms |
+| 50 im/s | 7 | 140 ms |
+
+La durée ne dépend plus de la cadence du fichier, ce qui est bien la moindre
+des choses : la caméra qui a filmé la scène ne savait pas à quelle cadence on
+allait la numériser.
+
+Le coût mesuré des deux passes reste sous 0,06 ms, à la limite de ce que le
+chronomètre GPU résout : devant les 0,3 à 0,4 ms du codage et du décodage, la
+caméra ne se voit pas passer.
+
+> **Dans le code** — `tvcolor/tube.py` pour la référence, `shaders/tube.glsl`
+> pour la carte graphique, et l'onglet **Caméra** dans les deux outils. La
+> caméra s'insère tout en amont, avant même la correction de gamma : c'est elle
+> qui fabrique le signal que tout le reste transporte.
+
+---
+
+### 15.12 Sept caméras, et ce qui les sépare
+
+Toutes les valeurs jusqu'ici décrivent *une* caméra. Or le matériel a beaucoup
+changé entre 1966 et 1987, et c'est précisément ce qui rend la question
+intéressante : la queue de comète n'est pas un défaut de la télévision, c'est le
+défaut d'une génération de caméras.
+
+#### Le correctif qu'il a fallu faire d'abord
+
+En essayant de régler le simulateur sur un vidicon, on découvre qu'il en est
+incapable. Le genou $q_0$ était écrit en dur à 0,10, et cette seule constante
+figée plafonne le résidu de troisième trame aux alentours de 0,7 % **à niveau
+nominal**, quelle que soit la rémanence :
+
+| $r_{\max}$ | $q_0$ | résidu 3ᵉ trame @100 % | @20 % | @5 % |
+|---|---|---|---|---|
+| 0,20 | 0,06 | 0,03 % | 0,13 % | 0,33 % |
+| 0,35 | 0,10 | 0,18 % | 0,73 % | 1,84 % |
+| 0,50 | 0,30 | 0,98 % | 3,42 % | 7,11 % |
+| 0,85 | 0,80 | 4,54 % | 14,26 % | 28,90 % |
+
+La première colonne le dit : à genou constant, tripler la rémanence ne change
+presque rien dans les hautes lumières, et tous les tubes finissent par se
+ressembler. Or le genou est bel et bien une propriété du tube — il dit à quelle
+échelle de charge le faisceau commence à peiner, ce qui dépend de l'épaisseur et
+de la nature du photoconducteur. Le sortir en paramètre ouvre un facteur
+vingt-cinq, et c'est lui, bien plus que $r_{\max}$, qui sépare un vidicon d'un
+Plumbicon.
+
+#### La table
+
+| année | caméra | tube | encaisse | traînée | rémanence 3ᵉ | masquage |
+|---|---|---|---|---|---|---|
+| 1966 | Vidicon 3 tubes | vidicon Sb₂S₃ | 1 × | 2,0 trames — 41 ms | 28,90 % | 0,00 |
+| 1970 | Plumbicon, car de reportage | PbO | 1 × | 1,7 — 34 ms | 1,84 % | 0,35 |
+| 1973 | Plumbicon de studio, bien réglé | PbO | 1 × | 1,4 — 28 ms | 1,19 % | 0,55 |
+| 1977 | Plumbicon à anti-comète | PbO + ACT | 128 × | 0 | 1,19 % | 0,70 |
+| 1981 | Saticon d'ENG | Se-As-Te | 83 × | 0 | 5,34 % | 0,80 |
+| 1984 | Saticon à canon diode | Se-As-Te | 272 × | 0 | 0,33 % | 0,95 |
+| 1987 | CCD | — | 1 204 × | 0 | 0,00 % | 1,00 |
+
+Traînée au réglage d'éclat **par défaut**, celui de la capture de 1972 ;
+rémanence mesurée à 5 % du blanc et sans lumière de biais, qui est une propriété du tube et non du réglage
+d'exploitation.
+
+Les trois premières lignes se tiennent dans un mouchoir, et c'est encore la
+saturation de la cible qui le veut : les trois tubes retiennent la même charge,
+et seul le courant du faisceau les sépare. Ce qui distingue vraiment le vidicon
+de 1966 n'est donc pas sa comète — treize millisecondes de plus, personne ne les
+voit — mais sa **rémanence**, quinze fois pire, qui rendait tout mouvement
+illisible. C'est d'ailleurs elle, et non la comète, qu'on voit sur les captures
+d'époque.
+
+Et la dernière colonne, celle du masquage, est celle qui a le plus bougé : c'est
+la **colorimétrie** qui distingue le mieux ces caméras, bien avant leur comète.
+Le §15.14 la chiffre — ΔE*ab moyen de 16,9 en 1966 contre 2,5 en 1987, et 37 %
+de saturation en moins.
+
+Deux choses à lire dans cette table. D'abord **la traînée ne remonte jamais** :
+c'est une amélioration continue, et la bascule est nette en 1977, à l'arrivée de
+l'anti-comète. Ensuite **la rémanence, elle, n'est pas monotone** — le Saticon de
+1981 traîne davantage que le Plumbicon de 1973. Ce n'est pas une erreur de
+saisie : le Saticon gagnait en définition ce qu'il perdait un peu en rémanence,
+et son canon diode a réglé la question trois ans plus tard. Un simulateur qui
+lisserait cet arbitrage mentirait sur l'histoire du matériel.
+
+#### D'où viennent ces valeurs, exactement
+
+Il faut le dire sans détour, parce que ce cours s'interdit précisément ce genre
+de flou.
+
+> **Ces valeurs ne sont pas recopiées de fiches techniques.** Ce qui est
+> documenté, c'est le *comportement* de chaque génération : quel
+> photoconducteur, quelle classe de rémanence, la présence ou l'absence d'un
+> circuit anti-comète, la pratique d'alignement de l'époque. Les paramètres du
+> simulateur sont choisis pour **reproduire ce comportement**, et chaque entrée
+> de la table porte sa rémanence mesurée — que
+> `tests/test_tube.py::test_chaque_camera_a_la_remanence_annoncee` recalcule à
+> chaque exécution, de sorte qu'une valeur retouchée à l'œil fait rougir la
+> suite.
+
+Ce qui sert d'ancrage documentaire, et rien de plus : le Plumbicon de Philips
+(1963) était spécifié à moins de 3 % de résidu en troisième trame, et ce fut son
+argument de vente face au vidicon au sulfure d'antimoine, qui dépassait 20 % et
+rendait tout mouvement illisible. Philips a livré le circuit anti-comète vers
+1975-76. Le Saticon de Hitachi et de la NHK (1973) gagnait en définition ce
+qu'il perdait en rémanence, et son canon diode du début des années 80 a réglé la
+question. L'alignement automatique des trois tubes est apparu vers 1980.
+
+On remarquera qu'**aucun nom de produit n'apparaît** dans les libellés, ni
+LDK-25, ni HL-79. Attribuer nommément des paramètres inventés à un modèle réel
+serait exactement l'affirmation invérifiable que ce projet s'interdit ; le type
+de tube et l'époque suffisent à situer le matériel.
+
+#### Ce que la dernière ligne ne simule pas
+
+L'entrée CCD de 1987 met tout à zéro : ni rémanence, ni queue de comète, ni
+désalignement, puisqu'il n'y a plus ni cible photoconductrice, ni faisceau, ni
+trois tubes à superposer. Elle est là pour montrer **ce qui a tué le
+phénomène**, et non pour simuler un capteur à transfert de charge : le défaut
+propre au CCD — la colonne verticale de lumière qui traverse toute l'image sur
+une très haute lumière, par fuite dans le registre de transfert — n'est pas
+modélisé ici. C'est un tout autre mécanisme, qui mériterait son propre chapitre.
+
+> **Dans le code** — `tvcolor.tube.CAMERAS`, une table unique dont l'interface,
+> le cours et les tests tirent tous leurs valeurs, sur le modèle exact de
+> `tvcolor.constantes.NORMES`. `ModeleCamera.appliquer` ne pose que les
+> caractéristiques du matériel : l'éclat des reflets décrit le plateau filmé et
+> non la caméra, et deux caméras différentes braquées sur les mêmes cymbales y
+> voient les mêmes reflets.
+
+---
+
+### 15.13 Le pont temporel, ou ce que la source ne contient plus
+
+La cible intègre **en continu** pendant toute la trame : un reflet qui la
+traverse y balaie un segment. Une vidéo, elle, n'a que vingt-cinq images par
+seconde. Ce qui s'est passé entre deux images **n'est pas dans le fichier**, et
+la charge se dépose donc par paquets espacés.
+
+Le résultat se voit tout de suite, et c'est faux : au lieu d'une traînée, on
+obtient **un chapelet de reflets distincts**. Mesuré sur la carte graphique, un
+reflet de trois pixels avançant de douze par image :
+
+| | pixels allumés | étendue | continuité |
+|---|---|---|---|
+| sans pont | 45 | 207 | 22 % |
+| avec pont | 213 | 236 | 90 % |
+
+Quatre pixels allumés sur cinq manquaient. L'outil image fixe n'a pas ce
+problème — il fabrique le mouvement, donc il le connaît, et `_filer` étale
+l'éclairement exactement de la longueur voulue (§15.7). Le moteur temps réel,
+lui, reçoit une vidéo dont il ignore tout du mouvement.
+
+#### Le principe : constater plutôt que chercher
+
+On n'estime pas le mouvement — ce serait une usine à gaz, et fragile. On
+constate son **résultat** : un point situé entre un reflet présent et une trace
+passée a nécessairement été traversé. Sur huit directions :
+
+$$\text{pont}(x) = \max_{d}\ \min\Big(\max_{+d} \text{« reflet neuf »},\ \max_{-d} \text{« trace abandonnée »}\Big)$$
+
+Les deux qualificatifs font tout le travail, et la première version s'en
+passait — pour ce résultat : **deux reflets immobiles distants de vingt-quatre
+pixels se retrouvaient reliés par un trait blanc**, purement inventé. On exige
+donc
+
+- « neuf » : un reflet **ici**, qui n'était pas là à l'image d'avant ;
+- « abandonné » : un reflet qui était **là**, et qui n'y est plus.
+
+Un reflet immobile est dans les deux images au même endroit : les facteurs
+s'annulent, et rien n'est relié. Un reflet qui a bougé a l'un d'un côté et
+l'autre de l'autre : le segment se remplit. Les deux cas sont vérifiés en sens
+contraire par `tests/test_tube.py`.
+
+#### La faute qui a mangé l'image
+
+La formulation ci-dessus est la seconde. La première comparait l'éclairement à
+la **charge** : « de l'éclairement là où il n'y avait pas encore de charge, et
+de la charge là où il n'y a plus d'éclairement ». Elle marchait parfaitement sur
+un reflet isolé, et se comportait très mal sur une vraie image.
+
+Le défaut est une boucle, et il faut une seconde pour le voir une fois qu'on
+l'a vu : **un point comblé dépose lui aussi de la charge.** À l'image suivante
+il devient donc une « trace abandonnée » pour ses voisins, qui se comblent à
+leur tour, et ainsi de suite. Mesuré sur une scène chaude en mouvement — un ciel
+écrêté et quelques éclats spéculaires :
+
+| image | 1 | 2 | 3 | 5 | 10 |
+|---|---|---|---|---|---|
+| part de l'écran en blanc saturé | 23 % | 32 % | 61 % | 78 % | **85 %** |
+
+La tache mangeait l'image. Et amortir ne suffisait pas : en ne donnant à un
+point comblé que 55 % de ce qu'un dépôt réel lui aurait donné, on atteignait
+encore 61 % à la douzième image. Il fallait **couper la boucle, pas la
+freiner**.
+
+D'où la formulation retenue : le pont ne consulte QUE l'éclairement — celui-ci
+et celui de l'image précédente — et **jamais la charge**. Un point comblé
+n'entre dans aucune des deux textures qu'il lit, et ne peut donc plus rien
+déclencher. Sur la même scène, la part de blanc se stabilise à 27 % dès la
+deuxième image et n'en bouge plus.
+
+C'est aussi ce qui a imposé au pont d'avoir **sa propre passe** sur carte
+graphique. Tant qu'il vivait dans la passe d'éclairement, il ne pouvait pas
+relire celui-ci — et recalculait donc l'éclairement de ses sondages *sans la
+porte de couverture*, trop coûteuse à refaire cent vingt-huit fois. Un grand
+aplat écrêté comptait alors comme un reflet neuf, ce qui alimentait la même
+boucle par un autre chemin.
+
+Un troisième garde-fou s'est imposé à la mesure : **seul ce qui dépasse le blanc
+compte**, des deux côtés. Sans ce seuil, le pont fuyait sur n'importe quelle
+image — un pixel sombre voyait un voisin clair d'un côté, le résidu de rémanence
+d'un autre voisin de l'autre, et se trouvait relevé de trois millièmes. Trois
+millièmes suffisaient à ruiner la transparence sur scène fixe, qui est le
+contrôle dont tout le reste dépend. Une queue de comète est par définition un
+dépôt en surcharge ; rien d'autre n'a le droit de déclencher le pont.
+
+#### Ce que c'est, et ce que ce n'est pas
+
+C'est une **interpolation**, pas un phénomène. Elle reconstruit une information
+que la source ne contient plus, et il faut le dire plutôt que de la faire passer
+pour de la physique.
+
+**Elle est donc nulle par défaut.** Sur un reflet isolé elle fait exactement ce
+qu'on lui demande ; sur une image chargée, elle diverge du simulateur de
+référence — 41 % de blanc saturé contre 29 % sur une scène chaude en mouvement.
+La raison est mesurée : la tache de diffusion de la carte graphique est 23 %
+plus large que la gaussienne exacte, et le pont amplifie cet écart le long de ses
+huit directions. On ne l'allume donc que pour ce à quoi il sert — un reflet vif
+et rapide qui sortirait en chapelet — et le reste du temps il coûte plus qu'il
+ne rend.
+
+Sur carte graphique, cela a imposé de **découper la caméra en quatre passes**
+au lieu de deux. La reconstruction de l'éclairement et le pont coûtent seize points
+de couverture et jusqu'à cent vingt-huit sondages ; les recalculer dans la passe
+de signal *et* dans la passe de charge aurait doublé la note. Ils ont donc leur
+propre passe, dont le résultat vit dans une texture que les deux autres se
+contentent de lire — deux texels chacune. Le découpage est à la fois plus rapide
+et plus sûr : il n'y a plus qu'un seul endroit où la reconstruction est écrite.
+
+### 15.14 La colorimétrie de la caméra
+
+Reste une erreur dont on n'a pas encore parlé, et qui n'a rien à voir avec la
+cible : **une caméra à tubes ne voit pas les bonnes couleurs.**
+
+#### Pourquoi il y a forcément une erreur
+
+Les courbes d'analyse idéales d'une caméra sont les fonctions colorimétriques
+des primaires de restitution — celles du chapitre 2. Or ces fonctions ont des
+**lobes négatifs**, et aucun filtre ne sait soustraire de la lumière. On ne
+fabrique que des courbes tout-positives, qui les approchent. Chaque voie récolte
+donc une part de ses voisines, et l'image sort **désaturée**.
+
+Le simulateur modélise cette contamination par une matrice appliquée en lumière
+linéaire, **avant la cible** — c'est le prisme séparateur qui la porte, pas
+l'électronique :
+
+$$A = \begin{pmatrix}
+0{,}88 & 0{,}10 & 0{,}02 \\
+0{,}08 & 0{,}86 & 0{,}06 \\
+0{,}02 & 0{,}10 & 0{,}88
+\end{pmatrix}$$
+
+Les lignes somment à 1, et ce n'est pas un détail : **le blanc reste blanc**.
+L'erreur ne porte que sur la saturation, et marginalement sur la teinte.
+
+Ces six coefficients ne viennent pas d'une fiche technique, et il faut le dire :
+ils sont choisis pour reproduire le comportement documenté — une désaturation
+nette, plus marquée sur le vert et le cyan, le bleu étant le mieux séparé parce
+que son filtre est le plus étroit. C'est leur effet, chiffré ci-dessous, qui
+engage ; pas les coefficients.
+
+#### La matrice de masquage
+
+D'où le second étage, dans l'électronique de la caméra : une matrice 3 × 3 aux
+coefficients hors diagonale **négatifs**. Elle refabrique par soustraction
+électronique les lobes que l'optique ne pouvait pas faire. À pleine efficacité
+elle est l'inverse exacte de $A$ ; le simulateur interpole entre l'identité —
+pas de matrice du tout — et $A^{-1}$.
+
+Elle vient **après la cible**, et l'ordre compte : entre les deux il y a
+l'écrêteur de blanc, et la correction ne rattrape donc pas ce qu'il a coupé.
+
+Mesuré sur les barres de couleur en PAL :
+
+| masquage | ΔE\*ab moyen | saturation |
+|---|---|---|
+| sans caméra du tout | 2,51 | −1,5 % |
+| 0,00 — aucune matrice | 16,90 | −36,9 % |
+| 0,35 | 11,90 | −29,2 % |
+| 0,55 | 8,93 | −23,8 % |
+| 0,70 | 6,66 | −18,9 % |
+| 0,80 | 5,16 | −14,9 % |
+| 0,95 | 3,02 | −6,1 % |
+| 1,00 — matrice exacte | 2,51 | −1,5 % |
+
+La dernière ligne est le contrôle : à masquage parfait, la caméra redevient
+**exactement** transparente, au chiffre près.
+
+![Ce que la caméra change, de 1966 à 1987](figures/25_cameras.png)
+
+La figure le montre sur la mire française du §15.12 : les barres du vidicon de
+1966 sont délavées et ses contours bordés de liserés colorés, celles du CCD de
+1987 sont celles de la mire — au dixième de ΔE près. C'est le même critère que partout
+ailleurs dans ce cours.
+
+Et c'est le réglage qui a le plus progressé entre 1966 et 1987 — bien plus que
+la rémanence. Une caméra industrielle de 1966 n'avait pas de matrice du tout et
+rendait une image franchement délavée ; en 1984 elle était réglable voie par
+voie, et la colorimétrie était juste.
+
+#### Deux limites de précision, rencontrées en route
+
+La première est arithmétique et vaut d'être notée. L'aller-retour $A$ puis
+$A^{-1}$ laisse un résidu de $10^{-16}$ sur les canaux qui devraient être
+exactement nuls. La correction de gamma qui suit a une **pente infinie en
+zéro** : elle transforme ce $10^{-16}$ en $2 \cdot 10^{-6}$ sur l'image finale.
+C'est la limite de ce qu'on peut demander à une transparence quand une matrice
+traverse un exposant fractionnaire — et cela reste quatre mille fois plus petit
+qu'un échelon de huit bits.
+
+La seconde a coûté une demi-heure de recherche. Sur carte graphique, la même
+reconstruction procède par **soustraction**, et les erreurs relatives d'un demi-
+flottant — dérisoires prises une à une — s'y amplifient : quatre niveaux sur 255
+au milieu d'une barre de couleur, ce qui n'est plus un détail. Les textures de
+charge et d'éclairement sont donc passées en simple précision. L'écart est
+retombé sous le niveau de quantification.
+
+---
+
+## 16. Annexes
 
 ### A. Tableau des constantes
 

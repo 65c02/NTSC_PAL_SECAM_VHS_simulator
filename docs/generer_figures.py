@@ -1121,6 +1121,134 @@ def figure_23_vhs(dossier: Path) -> Path:
 
 
 # ===========================================================================
+# 15. La caméra
+# ===========================================================================
+
+@figure("24", "La queue de comète d'une caméra à tubes")
+def figure_24_camera(dossier: Path) -> Path:
+    """Ce qu'un tube analyseur fait d'un reflet trop brillant qui se déplace.
+
+    Le volet du bas est le plus parlant, et c'est celui qui distingue une queue
+    de comète d'un flou de bougé : le profil de la traînée est **plat**, à
+    exactement 1,000 sur toute sa longueur, et il tombe à zéro d'un pixel à
+    l'autre. Une décroissance exponentielle — celle d'une rémanence ordinaire —
+    s'éteindrait en fondu. Ici le faisceau évacue une tranche FIXE par trame :
+    la décroissance est arithmétique, et la traînée a un bout franc.
+    """
+    from tvcolor.tube import filmer, obtenir_camera
+
+    # Le reflet fait six pixels sur une image de 288 lignes. Sa taille compte :
+    # c'est elle, et non son niveau, qui le fait reconnaître comme un reflet
+    # plutôt que comme un aplat blanc — cf. `tvcolor.tube.eclairement_scene`.
+    hauteur, largeur = 288, 512
+    scene = np.full((hauteur, largeur, 3), 0.08)
+    scene[60:96, 60:190] = (0.52, 0.14, 0.14)          # un peu de décor
+    scene[200:260, 320:460] = (0.12, 0.28, 0.50)
+    scene[139:145, 400:406] = 1.0                      # l'éclat de chrome
+
+    # Les deux caméras viennent de la table de `tvcolor.tube`, et non de
+    # réglages écrits ici : cette figure est une sortie de la table, pas une
+    # illustration qui vivrait à côté d'elle.
+    # Éclat poussé à vingt-cinq fois le blanc, et c'est délibéré : le réglage
+    # par défaut est celui d'une émission ordinaire, où l'effet est discret.
+    # Cette figure illustre le cas que le chapitre décrit — un projecteur dans
+    # l'axe — et il vaut mieux le dire que de laisser croire que c'est
+    # l'ordinaire.
+    def camera(code):
+        params = obtenir_camera(code).appliquer()
+        params.actif, params.mouvement, params.champs = True, (6.0, 0.0), 30
+        params.eclat_reflets = 25.0
+        return params
+
+    cas = [
+        ("Sans caméra", None),
+        ("1970 — Plumbicon de reportage", camera("plumbicon-reportage")),
+        ("1977 — Plumbicon à anti-comète", camera("plumbicon-act")),
+    ]
+    # Un reflet plus large que le défaut : à six pixels sur 288 lignes, la tache
+    # de diffusion de l'objectif l'étalerait au point qu'il ne saturerait plus.
+    scene[137:147, 398:408] = 1.0
+
+    fig = plt.figure(figsize=(12.0, 5.6))
+    grille = fig.add_gridspec(2, 3, height_ratios=[1.55, 2], hspace=0.30)
+
+    lus = []
+    for rang, (titre, params) in enumerate(cas):
+        lu = scene if params is None else filmer(scene, params)
+        lus.append(lu)
+        sous_titre = titre
+        if params is not None:
+            encaisse = params.capacite()
+            chiffres = ".1f" if encaisse < 10.0 else ".0f"
+            sous_titre += f"\nencaisse {encaisse:{chiffres}} × le blanc"
+        _image(fig.add_subplot(grille[0, rang]), lu, sous_titre)
+
+    ax = fig.add_subplot(grille[1, :])
+    for lu, (titre, _), couleur, epaisseur in zip(
+        lus, cas, (GRIS, ROUGE, BLEU), (1.4, 1.8, 1.4)
+    ):
+        ax.plot(lu[142, :, 0], color=couleur, lw=epaisseur, label=titre)
+
+    ax.set_xlim(330, 430)
+    ax.set_ylim(-0.05, 1.15)
+    ax.set_xlabel("colonne")
+    ax.set_ylabel("signal lu (blanc = 1)")
+    ax.set_title(
+        "Le profil de la ligne qui traverse le reflet — un cœur au blanc, "
+        "le halo de l'objectif, et un bout net"
+    )
+    ax.legend(loc="upper left")
+    return _enregistrer(fig, dossier, "24", "camera")
+
+
+@figure("25", "Ce que la caméra change, de 1966 à 1987")
+def figure_25_cameras(dossier: Path) -> Path:
+    """Quatre caméras de la table, sur la mire française.
+
+    C'est la figure qui répond à la question « le modèle de caméra joue-t-il ? »
+    On y lit d'un coup les trois erreurs, et laquelle domine : la colorimétrie.
+    Les barres du vidicon de 1966 sont délavées de plus d'un tiers, ses contours
+    bordés de liserés colorés par le désalignement des trois tubes ; celles du
+    CCD de 1987 sont exactement celles de la mire, parce qu'à masquage parfait
+    et sans tube la caméra redevient transparente.
+
+    Les mires sont un bon support pour cela, et pas seulement par coquetterie :
+    leurs barres sont à une saturation connue, et l'écart se lit donc sans
+    instrument.
+    """
+    from tvcolor.tube import CAMERAS
+
+    mire = mires.obtenir_mire("Mire TDF (France)", 288, 384)
+    choisies = ("vidicon", "plumbicon-reportage", "saticon-eng", "ccd")
+
+    fig, axes = plt.subplots(1, 5, figsize=(16.5, 3.6))
+
+    reference = encoder_decoder(
+        mire, Parametres(norme="PAL-BG", taille_sortie=mire.shape[:2])
+    )
+    bilan = mesures.evaluer(reference)
+    _image(axes[0], reference.finale, f"Sans caméra\nΔE {bilan.delta_e_moyen:.1f}")
+
+    for ax, code in zip(axes[1:], choisies):
+        camera = CAMERAS[code]
+        params = Parametres(norme="PAL-BG", taille_sortie=mire.shape[:2])
+        params.tube = camera.appliquer()
+        params.tube.actif = True
+        params.tube.mouvement = (0.0, 0.0)
+        params.tube.champs = 16
+        resultat = encoder_decoder(mire, params)
+        bilan = mesures.evaluer(resultat)
+        _image(
+            ax, resultat.finale,
+            f"{camera.annee} — {camera.tube}\n"
+            f"masquage {camera.masquage:.2f}, ΔE {bilan.delta_e_moyen:.1f}",
+        )
+
+    fig.tight_layout()
+    return _enregistrer(fig, dossier, "25", "cameras")
+
+
+# ===========================================================================
 
 def principal(argv=None) -> int:
     analyseur = argparse.ArgumentParser(description=__doc__)

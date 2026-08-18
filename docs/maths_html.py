@@ -29,6 +29,7 @@ SYMBOLES = {
     "cdot": "·", "times": "×", "div": "÷", "pm": "±", "mp": "∓",
     "approx": "≈", "equiv": "≡", "neq": "≠", "leq": "≤", "geq": "≥",
     "to": "→", "rightarrow": "→", "longrightarrow": "⟶", "Rightarrow": "⟹",
+    "Longrightarrow": "⟹", "Leftarrow": "⟸", "Longleftarrow": "⟸",
     "leftarrow": "←", "longleftarrow": "⟵",
     "in": "∈", "infty": "∞", "propto": "∝", "ldots": "…", "dots": "…",
     "partial": "∂", "circ": "∘", "ast": "∗", "sim": "∼",

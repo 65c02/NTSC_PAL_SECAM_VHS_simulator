@@ -10,13 +10,16 @@ ne sont **jamais dessinés**. Ils émergent du calcul. C'est la seule façon
 d'être sûr que ce qu'on regarde est vrai.
 
 📘 **Le cours complet est dans [`docs/cours.md`](docs/cours.md)** — la théorie,
-les mathématiques et les dérivations, illustrées par vingt-trois figures
+les mathématiques et les dérivations, illustrées par vingt-cinq figures
 produites par le simulateur lui-même. Le **chapitre 12** est consacré aux
 shaders — comment la même chaîne a été portée sur carte graphique, ce qu'un
 fragment shader interdit, et ce que le portage a coûté en fidélité — et le
 **chapitre 13** au son, qui ne voyageait pas dans le signal vidéo mais sur sa
 propre porteuse. Le **chapitre 14** ajoute le magnétoscope, qui ne se contentait
-pas de transporter le signal : il le démontait.
+pas de transporter le signal : il le démontait. Le **chapitre 15** remonte enfin
+tout en amont, jusqu'à la caméra à tubes et à sa queue de comète — ces grandes
+traînées blanches que laissaient les reflets dans les émissions musicales des
+années soixante-dix.
 
 ---
 
@@ -26,15 +29,17 @@ pas de transporter le signal : il le démontait.
 pip install -r requirements.txt
 ```
 
-Deux applications, deux usages :
+Trois applications, trois usages :
 
 ```bash
-run.bat            # banc de mesure : une image fixe, les instruments
-play_video.bat     # lecteur vidéo temps réel, codage sur GPU
+run.bat     # banc de mesure : une image fixe, les instruments
+tv.bat      # lecteur vidéo temps réel, codage sur GPU
+radio.bat   # simulateur radio : AM, FM, CB, talkie, VHF marine et aéro
 ```
 
-`play_video.bat` accepte aussi qu'on **glisse un fichier vidéo sur son icône**.
-Sans passer par les lanceurs : `python -m gui` et `python -m lecteur`.
+`tv.bat` et `radio.bat` acceptent qu'on **glisse un fichier sur leur icône**.
+Sans passer par les lanceurs : `python -m gui`, `python -m lecteur`,
+`python -m radio`.
 
 ---
 
@@ -57,13 +62,15 @@ pâlit, le SECAM ne bouge pas.
 - **Tous les réglages normatifs** — bandes passantes, séparateur Y/C, ligne à
   retard PAL, bruit, phase et gain différentiels, écho, désaccord de
   sous-porteuse, primaires, gamma, piédestal, entrelacement.
-- **Neuf mires** conçues pour révéler chacune un artefact, dont un piège à
-  cross-color et un piège à dot crawl.
+- **Douze mires** conçues pour révéler chacune un artefact — dont un piège à
+  cross-color, un piège à dot crawl, et trois cartes de test nationales.
 - **Un magnétoscope VHS**, entre l'antenne et le téléviseur — sa vraie place.
+- **Une caméra à tubes**, tout en amont — rémanence, désalignement des trois
+  tubes, et queue de comète sur les reflets.
 - **Comparaison des trois normes** dans des conditions identiques.
 
-Les réglages sont en quatre onglets — **Image**, **Bruit**, **Magnétoscope**,
-**Son**. Le bruit a le sien pour une raison précise : il n'appartient pas à
+Les réglages sont en cinq onglets — **Image**, **Caméra**, **Bruit**,
+**Magnétoscope**, **Son**. Le bruit a le sien pour une raison précise : il n'appartient pas à
 l'image. Il y a un canal, une densité de bruit, et deux porteuses qui y
 puisent.
 
@@ -107,13 +114,186 @@ fautes : un magnétoscope régénère sa porteuse de relecture à partir du sign
 lu, si bien que l'erreur de base de temps s'annule dans la démodulation. Le
 décalage porte donc sur l'enveloppe de la chrominance, jamais sur sa porteuse.
 
+### Trois mires nationales
+
+Au catalogue, à côté des mires d'instrument : la **mire TDF** française, la
+**Test Card F** de la BBC et la **mire de définition NHK** japonaise.
+
+Leur disposition est une reconstruction — elle reprend la structure de chaque
+carte sans prétendre au pixel près. Leurs éléments **mesurables**, en revanche,
+sont exacts et calculés depuis la norme choisie : les réseaux tombent sur les
+mégahertz annoncés parce qu'ils sont dérivés de la durée de ligne active, et
+`tests/test_mires.py` les remesure par transformée de Fourier. Le réseau unique
+de la mire NHK est calé sur la coupure de luminance de la norme : il se déplace
+donc de 4,2 MHz en NTSC à 6,0 en SECAM, et doit disparaître dans les deux cas.
+
+La photographie de la Test Card F n'est pas reproduite — ni la petite fille, ni
+le clown. Le panneau central garde le tableau noir et sa grille de morpion, qui
+étaient bien dessinés derrière eux.
+
+### La caméra à tubes
+
+Dans une émission musicale des années soixante-dix, les reflets sur les
+cymbales et le chrome des pieds de micro laissaient de **grandes traînées
+blanches** quand ils se déplaçaient. Cela s'appelle une *queue de comète*, et
+cela se déduit du fonctionnement du tube analyseur.
+
+Un tube ne mesure pas la lumière : il mesure la **charge** que la lumière a
+soutirée à une cible photoconductrice, et c'est le courant qu'il faut au
+faisceau d'électrons pour la remettre à niveau qui fait le signal vidéo. Or ce
+faisceau a un débit maximal, réglé pour évacuer 130 % du blanc. Un reflet
+spéculaire, lui, dépasse le blanc de vingt à cinquante fois : le faisceau en
+évacue une tranche **fixe** par trame, et il lui faut plusieurs trames pour en
+venir à bout — pendant lesquelles le reflet s'est déplacé.
+
+Quatre conséquences, toutes vérifiables sur un enregistrement d'époque, et
+toutes émergentes du calcul plutôt que peintes :
+
+- le cœur de la traînée est d'un **blanc plat**, entouré d'un halo dégradé que
+  l'objectif fabrique — un reflet ne se pose pas sur la cible en carré net, et
+  l'oublier donnait des taches blanches à bords francs ;
+- **l'image disparaît derrière elle** — le faisceau donne déjà tout ;
+- elle **s'arrête net**, la décroissance étant arithmétique et non
+  exponentielle. C'est ce qui distingue une comète d'un flou de bougé ;
+- et elle **change de couleur sur sa longueur** quand le fichier a gardé
+  l'inégalité entre canaux : sur un reflet à (1,000 ; 0,981 ; 0,950), le rouge
+  traîne sur 53 pixels, le vert sur 24, le bleu sur 5. Si les trois canaux sont
+  à 255, en revanche, plus rien ne dit lequel dominait dans la scène et la
+  traînée sort blanche — l'information a été perdue par le fichier, pas par la
+  simulation.
+
+**Le réglage par défaut est délibérément léger**, et il est calé sur une
+capture d'émission de 1972 — un groupe sur scène, éclairage de concert,
+mouvement partout. Ce qu'on y voit est discret : aucune plage blanche, aucun
+pixel écrêté, et les traînées visibles sont celles du sujet lui-même. Sur un
+éclat de chrome de douze pixels, le cœur blanc en fait vingt-six, entouré d'un
+halo dégradé de cent huit. La comète spectaculaire existe — mais elle suppose un
+projecteur dans l'axe, et c'est au curseur **Éclat des reflets** de le dire.
+
+Ce chiffre a d'abord été dix fois plus grand, et faux. La **cible sature** — sa
+face arrière ne peut pas remonter au-delà du potentiel de sa face avant — et le
+premier modèle l'ignorait : un reflet resté quarante trames dans le champ y
+accumulait de quoi traîner **quinze secondes**. Une fois la borne posée, la
+durée ne dépend plus que du rapport entre la capacité de la cible et le courant
+du faisceau, et non de l'éclat du reflet : au-delà de la saturation, un reflet
+deux fois plus brillant ne traîne pas plus longtemps. Le moteur temps réel avait
+en outre sa propre faute, du même genre — il déchargeait la cible une fois par
+*image* de vidéo au lieu d'une fois par *trame*, ce qui faisait durer toutes les
+traînées exactement deux fois trop longtemps sur une source à 25 im/s.
+
+Ce qui distingue vraiment ces caméras n'est d'ailleurs pas leur comète — treize
+millisecondes séparent le vidicon de 1966 du Plumbicon de 1973, personne ne les
+voit — mais leur **rémanence** et leur **colorimétrie**. C'est la rémanence,
+et non la comète, qu'on voit sur les captures d'époque.
+
+Deux réglages méritent d'être connus, parce qu'ils décident de la force de
+l'effet. Le **seuil des reflets** est la seule hypothèse du modèle : un fichier
+huit bits ne dit plus quel pixel écrêté était du chrome sous projecteur et lequel
+était un mur éclairé. À 0,94 par défaut, seul ce qui est à un cheveu de
+l'écrêtage est candidat — le baisser fait réapparaître de grandes plages
+blanches, ce qui est instructif mais n'est pas ce que voyait un opérateur. Le
+**pont entre images** comble ce que l'échantillonnage temporel de la source a
+laissé vide : sans lui, un reflet rapide sort en chapelet plutôt qu'en traînée.
+Il est **nul par défaut** — c'est une interpolation et non un phénomène, et sur
+une image chargée elle diverge du simulateur de référence. On ne l'allume que
+pour ce à quoi il sert.
+
+L'onglet règle aussi la **rémanence** — bien pire dans les bas niveaux, d'où la
+lumière de biais qui remontait le point de fonctionnement — le **désalignement**
+des trois tubes, et le **circuit anti-comète** que Philips a livré en 1976.
+
+Mais on n'est pas obligé de toucher aux curseurs : un **menu de sept caméras**,
+de 1966 à 1987, les règle d'un geste.
+
+| année | caméra | encaisse | traînée | rémanence 3ᵉ | ΔE\*ab |
+|---|---|---|---|---|---|
+| 1966 | Vidicon 3 tubes | 1 × | 41 ms | 28,90 % | 16,9 |
+| 1970 | Plumbicon, car de reportage | 1 × | 34 ms | 1,84 % | 11,9 |
+| 1973 | Plumbicon de studio, bien réglé | 1 × | 28 ms | 1,19 % | 8,9 |
+| 1977 | Plumbicon à anti-comète | 128 × | 0 | 1,19 % | 6,7 |
+| 1981 | Saticon d'ENG | 83 × | 0 | 5,34 % | 5,2 |
+| 1984 | Saticon à canon diode | 272 × | 0 | 0,33 % | 3,0 |
+| 1987 | CCD | 1 204 × | 0 | 0,00 % | 2,5 |
+
+La traînée ne remonte jamais, et la bascule est nette en 1977 : c'est l'arrivée
+de l'anti-comète. La rémanence, en revanche, n'est pas monotone — le Saticon de
+1981 traîne davantage que le Plumbicon de 1973, parce qu'il gagnait ailleurs, en
+définition. Le simulateur rend cet arbitrage plutôt que de le lisser.
+
+La dernière colonne est celle de la **colorimétrie**, et c'est elle qui
+distingue le mieux ces caméras — bien avant leur comète. Les courbes d'analyse
+idéales d'une caméra ont des *lobes négatifs*, et aucun filtre ne sait
+soustraire de la lumière : chaque voie récolte donc une part de ses voisines et
+l'image sort désaturée. D'où la **matrice de masquage** dans l'électronique,
+aux coefficients hors diagonale négatifs, qui refabrique par soustraction ce
+que l'optique ne pouvait pas faire. Sans elle, 37 % de saturation en moins ;
+avec, la caméra redevient exactement transparente.
+
+**Ces valeurs ne sont pas recopiées de fiches techniques**, et le cours le dit
+en toutes lettres : ce qui est documenté, c'est le comportement de chaque
+génération, et les paramètres sont choisis pour le reproduire. Chaque ligne
+porte sa rémanence *mesurée*, que la suite de tests recalcule à chaque
+exécution. Le chapitre 15 du cours donne tout le calcul et les tableaux.
+
+Un contrôle vaut d'être signalé : sur une scène **fixe**, le tube est
+rigoureusement transparent — ΔE\*ab moyen de 2,51 sans caméra, 2,51 avec. Un
+tube ne dégrade pas une image immobile, il ne fait que retarder les changements,
+et le modèle le rend exactement.
+
+---
+
+## Le simulateur radio
+
+Le pendant sonore, et le même principe : on reconstruit le **signal réellement
+transmis** — l'enveloppe complexe de la porteuse — on lui fait traverser un
+canal bruité, et on le démodule comme le ferait le poste. Ce qu'on entend n'est
+pas un effet appliqué à un fichier ; c'est ce qui ressort de la démodulation.
+
+```bash
+radio.bat "C:\musique\morceau.mp3"
+```
+
+Sept services, chacun avec sa modulation, son canal, son compresseur et son
+haut-parleur :
+
+| service | modulation | canal | largeur | β | gain FM |
+|---|---|---|---|---|---|
+| Radiodiffusion AM, ondes moyennes | AM | 9,00 kHz | 9,0 kHz | — | — |
+| Radiodiffusion FM, mono | FM | 100,00 kHz | 180,0 kHz | 5,00 | +26,5 dB |
+| CB 27 MHz, AM | AM | 10,00 kHz | 6,0 kHz | — | — |
+| CB 27 MHz, bande latérale unique | BLU | 10,00 kHz | 2,7 kHz | — | — |
+| Talkie-walkie PMR446 | FM | 12,50 kHz | 11,0 kHz | 0,83 | +5,8 dB |
+| VHF marine | FM | 25,00 kHz | 16,0 kHz | 1,67 | +13,5 dB |
+| VHF aéronautique | AM | 25,00 kHz | 5,4 kHz | — | — |
+
+Trois lois se mesurent au lieu de se décréter. **L'AM ne gagne rien** : un
+décibel de porteuse rend exactement un décibel de signal. **La FM gagne ce que
+sa largeur lui coûte** : à C/N de 20 dB, le talkie fait douze décibels de mieux
+qu'une AM de même encombrement, la radiodiffusion trente-cinq. **Et la FM
+s'effondre** sous son seuil — les craquements ne sont pas un générateur de
+clics, c'est le vecteur de bruit qui fait le tour de l'origine et le
+discriminateur qui sort une impulsion à chaque tour.
+
+Deux détails qui font tout le caractère. **Le sifflement de deux avions qui
+parlent ensemble** n'est pas ajouté : on additionne deux nombres complexes, et
+sa fréquence est l'écart des deux émetteurs. C'est même la raison pour laquelle
+l'aéronautique est restée en amplitude — en fréquence, le plus fort aurait
+effacé l'autre en silence. Et **le haut-parleur** : un talkie ne sonne pas comme
+un talkie à cause de sa modulation, mais à cause du transducteur de trente-six
+millimètres en boîtier plastique, qui ne descend pas, résonne à 1100 Hz et
+s'éteint vite. La case se décoche, et l'écart est saisissant.
+
+L'export se fait en WAV ou en MP3 (`Ctrl+E`). Le détail de la chaîne, les
+tableaux de mesure et la liste de ce qui **n'est pas** simulé sont dans
+[`docs/radio.md`](docs/radio.md).
+
 ---
 
 ## Le lecteur vidéo
 
 ```bash
-play_video.bat "C:\films\mon_film.mp4"   # ou glisser le fichier sur l'icône
-run.bat video mon_film.mp4               # équivalent, via le lanceur général
+tv.bat "C:\films\mon_film.mp4"   # ou glisser le fichier sur l'icône
+run.bat video mon_film.mp4       # équivalent, via le lanceur général
 ```
 
 **Commandes** — `Ctrl+O` ouvrir · `Espace` lire/pause · `1` `2` `3` changer de
@@ -121,8 +301,8 @@ norme **sans interrompre la lecture** · `←` `→` reculer ou avancer de cinq
 secondes · `M` couper le son · `F11` plein écran, `Échap` pour en sortir ·
 `Ctrl+E` exporter en MP4. Le glisser-déposer fonctionne aussi dans la fenêtre.
 
-Les réglages sont en quatre onglets — **Image**, **Bruit**, **Magnétoscope**,
-**Son**. Le bruit a le sien parce qu'il n'appartient à aucun des deux : un seul
+Les réglages sont en cinq onglets — **Image**, **Caméra**, **Bruit**,
+**Magnétoscope**, **Son**. Le bruit a le sien parce qu'il n'appartient à aucun des deux : un seul
 canal, une seule densité de bruit, et l'onglet montre en clair ce que la voie
 son en récolte.
 
@@ -130,6 +310,12 @@ Le magnétoscope tourne lui aussi sur la carte graphique — `shaders/vhs.glsl`,
 une passe entre le codage et le décodage — et coûte 0,16 ms de plus par image :
 0,36 ms au lieu de 0,20 en mode SP, soit encore près de trois mille images par
 seconde.
+
+La caméra à tubes également — `shaders/tube.glsl`, deux passes avant le codage.
+C'est la seule partie de ce moteur qui garde un état d'une image à l'autre : la
+charge restée sur la cible vit dans une texture, relue à l'image suivante, et
+c'est elle qui fait la traînée. Son coût reste sous 0,06 ms, à la limite de ce
+que le chronomètre GPU sait résoudre.
 
 Le plein écran masque toute l'interface — barre d'outils, panneau de réglages,
 transport et barre d'état : il ne reste que la dalle sur fond noir.
@@ -448,6 +634,9 @@ tvcolor/          bibliothèque de simulation (numpy pur)
   encodeur.py       R'G'B' → signal composite
   canal.py          les dégradations de la transmission
   decodeur.py       séparation Y/C, démodulation, mémoire de ligne
+  tube.py           la caméra : rémanence, queue de comète, désalignement
+  vhs.py            le magnétoscope : color-under, gigue, pertes de signal
+  son.py            la voie son : porteuse, FM, accentuations, intercarrier
   pipeline.py       la chaîne complète
   mires.py          les neuf mires de test
   mesures.py        vectorscope, spectres, ΔE*ab, résolutions
@@ -458,9 +647,19 @@ shaders/          les trois shaders GLSL, un par norme
   pal.glsl          idem, avec l'inversion de V ligne à ligne
   secam.glsl        modulation de fréquence, séquentielle
   scan.frag         somme préfixe : l'intégrale de phase du SECAM
+  tube.glsl         la caméra — la seule passe à garder un état d'une image à l'autre
+  vhs.glsl          le magnétoscope, entre le codage et le décodage
   bloom.glsl        halation et épanouissement du faisceau
   presentation.frag courbure de la dalle, définition du tube, lignes, masque
   sommet.vert       triangle plein écran, sans tampon de sommets
+
+radio/            le simulateur radio (numpy pur, sauf l'interface)
+  services.py       la table des sept services, et leurs constantes
+  modulation.py     AM, FM, BLU — modulateurs et démodulateurs
+  canal.py          bruit, évanouissement, parasites, stations voisines
+  chaine.py         l'enchaînement complet, en flux
+  source_audio.py   décodage des fichiers, export WAV et MP3
+  app.py            la fenêtre
 
 lecteur/          le lecteur vidéo temps réel
   normes_gl.py      traduction des normes en uniformes, conception des noyaux
@@ -470,7 +669,7 @@ lecteur/          le lecteur vidéo temps réel
   app.py            la fenêtre
 
 gui/              le banc de mesure PyQt5
-docs/             le cours, ses vingt-trois figures, et leurs générateurs
+docs/             le cours, ses vingt-cinq figures, et leurs générateurs
 tests/            152 tests
 ```
 
@@ -479,12 +678,13 @@ tests/            152 tests
 ## Vérification
 
 ```bash
-run.bat tests          # ou : python -m pytest tests/ -v
+run.bat tests        # ou : python -m pytest tests/ -v
 ```
 
-76 tests : 23 sur le matriçage et la colorimétrie, 16 sur l'horloge de
-sous-porteuse, 19 sur la chaîne complète, 18 sur les shaders. Ils ne se
-contentent pas de vérifier que le code s'exécute — ils contrôlent les
+277 tests : 23 sur le matriçage et la colorimétrie, 16 sur l'horloge de
+sous-porteuse, 19 sur la chaîne complète, 34 sur les shaders, 31 sur le son,
+37 sur la caméra, 21 sur le magnétoscope, 37 sur la radio, 46 sur les mires et
+13 sur l'export. Ils ne se contentent pas de vérifier que le code s'exécute — ils contrôlent les
 **propriétés physiques** dont tout le reste découle :
 
 - les coefficients 0,299 / 0,587 / 0,114 sont recalculés depuis les primaires
@@ -511,7 +711,8 @@ Si un artefact n'apparaissait pas, ce serait la simulation qui aurait tort.
 
 ```
 run.bat                banc de mesure
-run.bat video [f.mp4]  lecteur vidéo
+tv.bat [film.mp4]      lecteur vidéo
+run.bat video [f.mp4]  synonyme du précédent
 run.bat tests          suite de vérification
 run.bat figures        régénère les figures du cours
 run.bat html           reconstruit docs/cours.html
