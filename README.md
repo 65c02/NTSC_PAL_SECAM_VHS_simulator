@@ -352,8 +352,37 @@ run.bat video mon_film.mp4       # équivalent, via le lanceur général
 
 **Commandes** — `Ctrl+O` ouvrir · `Espace` lire/pause · `1` `2` `3` changer de
 norme **sans interrompre la lecture** · `←` `→` reculer ou avancer de cinq
-secondes · `M` couper le son · `F11` plein écran, `Échap` pour en sortir ·
-`Ctrl+E` exporter en MP4. Le glisser-déposer fonctionne aussi dans la fenêtre.
+secondes · `M` couper le son · `C` volet de comparaison · `F11` plein écran,
+`Échap` pour en sortir · `Ctrl+E` exporter en MP4. Le glisser-déposer
+fonctionne aussi dans la fenêtre.
+
+### Le volet de comparaison
+
+`C`, ou la case de l'onglet Image, et le pointeur commande un volet : **à
+gauche la vidéo telle qu'elle est entrée, à droite le téléviseur.** Il n'y a
+rien à cliquer ni à faire glisser — on passe la souris sur l'image, et la
+coupure suit.
+
+Les deux moitiés sont échantillonnées à la **même coordonnée d'image**,
+courbure de la dalle comprise : un point de la scène tombe au même endroit des
+deux côtés du volet. On ne compare donc que ce qui a changé — le signal, jamais
+la géométrie. À gauche, aucun traitement : ni codage, ni canal, ni caméra à
+tubes, ni réponse de tube, ni lignes de balayage. Ni luminosité non plus, ce
+réglage n'existant que pour rendre la lumière que les lignes et le masque ont
+prise.
+
+Deux détails de mise en œuvre valent d'être dits. Le choix entre les deux
+moitiés se fait **à la fin du shader**, alors qu'un retour anticipé coûterait
+moins cher : `dFdx` et `dFdy` se calculent sur des groupes de quatre fragments,
+et le GLSL ne les définit que si tout le groupe suit le même chemin — sortir
+tôt rendrait fausses, sur la colonne qui borde le volet, les dérivées dont
+dépendent l'intégrale des lignes de balayage et l'adoucissement du bord de
+dalle. Et la position du volet ne vit **pas** dans `ParametresRendu` : elle
+vient de la souris, que seule la vue connaît, et le panneau de réglages la
+ramènerait en arrière au premier curseur touché.
+
+Le volet est repris par l'export MP4 — un fichier de comparaison, coupé où on
+l'a laissé.
 
 Les réglages sont en cinq onglets — **Image**, **Caméra**, **Bruit**,
 **Magnétoscope**, **Son**. Le bruit a le sien parce qu'il n'appartient à aucun des deux : un seul
@@ -729,7 +758,7 @@ lecteur/          le lecteur vidéo temps réel
 
 gui/              le banc de mesure PyQt5
 docs/             le cours, ses vingt-cinq figures, et leurs générateurs
-tests/            300 tests
+tests/            305 tests
 ```
 
 ---
@@ -740,8 +769,8 @@ tests/            300 tests
 run.bat tests        # ou : python -m pytest tests/ -v
 ```
 
-300 tests : 23 sur le matriçage et la colorimétrie, 16 sur l'horloge de
-sous-porteuse, 19 sur la chaîne complète, 34 sur les shaders, 31 sur le son,
+305 tests : 23 sur le matriçage et la colorimétrie, 16 sur l'horloge de
+sous-porteuse, 19 sur la chaîne complète, 39 sur les shaders, 31 sur le son,
 37 sur la caméra, 21 sur le magnétoscope, 37 sur la radio, 23 sur l'injection
 sonore, 46 sur les mires et 13 sur l'export. Ils ne se contentent pas de vérifier que le code s'exécute — ils contrôlent les
 **propriétés physiques** dont tout le reste découle :

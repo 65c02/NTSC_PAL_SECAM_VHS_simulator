@@ -362,6 +362,28 @@ class FenetreLecteur(QtWidgets.QMainWindow):
         self.case_proportions.toggled.connect(self._appliquer)
         groupe.ajouter(self.case_proportions)
 
+        self.case_comparaison = QtWidgets.QCheckBox(
+            "Comparer au survol : à gauche la vidéo, à droite le téléviseur"
+        )
+        self.case_comparaison.setToolTip(
+            "Passez la souris sur l'image : le volet suit le pointeur.\n"
+            "Touche C pour l'allumer ou l'éteindre."
+        )
+        self.case_comparaison.toggled.connect(self._appliquer)
+        groupe.ajouter(self.case_comparaison)
+
+        groupe.ajouter(note(
+            "Les deux moitiés sont prises à la même coordonnée d'image, "
+            "courbure de la dalle comprise : un point de la scène tombe au "
+            "même endroit des deux côtés du volet, et l'on ne compare donc "
+            "que le signal.\n\n"
+            "À gauche, la vidéo telle qu'elle est entrée dans la chaîne — ni "
+            "codage, ni canal, ni caméra, ni réponse du tube. Le réglage de "
+            "luminosité ne s'y applique pas non plus : il est là pour rendre "
+            "la lumière que les lignes de balayage et le masque ont prise, et "
+            "de ce côté-ci il n'y a rien à rendre."
+        ))
+
         self.case_format_tv = QtWidgets.QCheckBox("Ramener la vidéo au format d'un téléviseur")
         self.case_format_tv.setChecked(True)
         self.case_format_tv.setToolTip(
@@ -838,6 +860,7 @@ class FenetreLecteur(QtWidgets.QMainWindow):
             cadence_source=self._cadence_source,
             animer=self.case_animer.isChecked(),
             conserver_proportions=self.case_proportions.isChecked(),
+            comparaison=self.case_comparaison.isChecked(),
         )
 
     def _appliquer(self, *_args) -> None:
@@ -1111,6 +1134,11 @@ class FenetreLecteur(QtWidgets.QMainWindow):
                 self.source.chercher(max(0.0, self._position + delta))
         elif touche == QtCore.Qt.Key_M:
             self.bouton_son.toggle()
+        elif touche == QtCore.Qt.Key_C:
+            # Porté par la fenêtre et non par la case, pour que le volet de
+            # comparaison reste accessible en plein écran, où le panneau de
+            # réglages est masqué — une case cachée ne reçoit plus rien.
+            self.case_comparaison.toggle()
         else:
             super().keyPressEvent(evenement)
 

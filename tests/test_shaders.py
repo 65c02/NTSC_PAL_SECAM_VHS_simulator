@@ -644,3 +644,143 @@ def test_le_pont_temporel_rend_la_trainee_continue(vue):
     # trajet. C'est ce qu'il y a ENTRE eux que le pont change : quatre fois
     # plus de pixels allumés pour la même longueur de traînée.
     assert avec[0] > 4.0 * sans[0]
+
+
+# ---------------------------------------------------------------------------
+# Le volet de comparaison
+# ---------------------------------------------------------------------------
+
+def _presenter(vue, image, taille=(320, 256), volet=None, **reglages) -> np.ndarray:
+    """Rend jusqu'à la passe de PRÉSENTATION, la seule qui porte le volet.
+
+    `image_rendue` ne suffit pas ici : elle relit la cible décodée, en amont de
+    la présentation — le volet, la courbure et les lignes de balayage n'y sont
+    pas encore. On passe donc par le chemin de l'export, qui est exactement
+    celui de la fenêtre.
+
+    La taille demandée a le format de la mire, ce qui rend le cadrage neutre :
+    facteur 1, décalage nul, et la coordonnée d'écran est celle de l'image.
+    """
+    from lecteur.vue_gl import ParametresRendu
+
+    vue.appliquer(ParametresRendu(animer=False, **reglages))
+    if volet is not None:
+        vue.volet = float(volet)
+    vue.definir_image((np.clip(image, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+    rendu = vue.rendre_pour_export(*taille)
+    assert rendu is not None, "la présentation n'a rien produit"
+    return rendu.astype(np.float64) / 255.0
+
+
+def _mire_volet():
+    """Une mire à détail fin : c'est là que le codage se voit le plus."""
+    return mires.obtenir_mire("Mire TDF (France)", 256, 320)
+
+
+def _interieur(image, marge=8):
+    """Retire le bord, où l'adoucissement du bord de dalle assombrit l'image."""
+    return image[marge:-marge, marge:-marge]
+
+
+def test_le_volet_a_droite_montre_la_video_telle_qu_elle_est_entree(vue):
+    """Volet au bout : toute la fenêtre montre la source, intacte.
+
+    C'est le contrôle de transparence du mode. La vidéo brute traverse deux
+    quantifications sur huit bits — celle du téléversement, celle de la
+    relecture — et rien d'autre : deux millièmes d'écart au maximum, soit un
+    demi-niveau. Aucun codage, aucun filtre, aucune réponse de tube.
+    """
+    source = _mire_volet()
+    nue = _presenter(vue, source, volet=1.0, comparaison=True, norme="SECAM-L")
+
+    ecart = np.abs(_interieur(nue) - _interieur(source))
+    assert ecart.max() < 0.01, f"écart maximal {ecart.max():.4f}"
+
+
+def test_le_volet_a_gauche_rend_exactement_le_televiseur(vue):
+    """L'autre bout : le mode ne doit alors rien changer du tout.
+
+    Bit à bit, et non « à peu près » — le volet est un choix entre deux
+    valeurs, pas un mélange. Seule la colonne du trait est exclue : il se
+    dessine par-dessus l'image, à l'abscisse demandée.
+    """
+    source = _mire_volet()
+    tout = _presenter(vue, source, volet=0.0, comparaison=True, norme="SECAM-L")
+    sans = _presenter(vue, source, comparaison=False, norme="SECAM-L")
+
+    assert np.array_equal(tout[:, 3:], sans[:, 3:])
+
+
+def test_le_volet_coupe_a_l_abscisse_demandee(vue):
+    """La moitié gauche est la source, la droite est le téléviseur.
+
+    Et la coupure tombe où on l'a mise. On mesure l'écart à la source colonne
+    par colonne : il est cinquante fois plus grand à droite qu'à gauche, et le
+    saut se produit à un pixel près de l'abscisse demandée.
+    """
+    source = _mire_volet()
+    coupe = _presenter(vue, source, volet=0.5, comparaison=True, norme="SECAM-L")
+
+    largeur = source.shape[1]
+    milieu = largeur // 2
+    ecart = np.abs(coupe - source).mean(axis=(0, 2))
+
+    gauche = ecart[8:milieu - 4].mean()
+    droite = ecart[milieu + 8:-8].mean()
+    assert gauche < 0.005
+    assert droite > 0.05
+    assert droite > 50.0 * gauche
+
+    # Première colonne qui s'écarte franchement de la source : c'est la
+    # coupure, et elle doit être à l'abscisse demandée.
+    saut = int(np.argmax(ecart > 0.5 * droite))
+    assert abs(saut - milieu) <= 2, f"coupure en {saut}, attendue en {milieu}"
+
+
+def test_le_volet_porte_un_trait_visible(vue):
+    """Un repère de deux pixels, sans quoi on ne saurait pas où l'on coupe.
+
+    Mesuré sur une mire sombre : à l'abscisse du volet, l'image est blanche
+    alors qu'elle ne l'est nulle part autour.
+    """
+    source = np.full((256, 320, 3), 0.05)
+    coupe = _presenter(vue, source, volet=0.5, comparaison=True, norme="PAL-BG")
+
+    milieu = 160
+    trait = coupe[:, milieu - 1:milieu + 1].mean()
+    autour = coupe[:, milieu - 20:milieu - 10].mean()
+    assert trait > 0.9
+    assert autour < 0.2
+
+    # Et il n'apparaît pas quand le mode est éteint.
+    sans = _presenter(vue, source, comparaison=False, norme="PAL-BG")
+    assert sans[:, milieu - 1:milieu + 1].mean() < 0.2
+
+
+def test_le_survol_deplace_le_volet_et_seulement_dans_ce_mode(vue):
+    """La position vient de la souris, et de nulle part ailleurs.
+
+    Elle n'est pas dans `ParametresRendu` : le panneau de réglages y écrirait
+    la valeur de son dernier passage, et le volet reviendrait en arrière au
+    premier curseur touché. C'est la vue qui la garde.
+    """
+    from PyQt5 import QtCore, QtGui
+
+    from lecteur.vue_gl import ParametresRendu
+
+    def survoler(x_relatif):
+        evenement = QtGui.QMouseEvent(
+            QtCore.QEvent.MouseMove,
+            QtCore.QPointF(vue.width() * x_relatif, 10.0),
+            QtCore.Qt.NoButton, QtCore.Qt.NoButton, QtCore.Qt.NoModifier,
+        )
+        vue.mouseMoveEvent(evenement)
+
+    vue.appliquer(ParametresRendu(comparaison=True))
+    survoler(0.25)
+    assert abs(vue.volet - 0.25) < 0.01
+
+    # Mode éteint : le survol ne touche plus à rien.
+    vue.appliquer(ParametresRendu(comparaison=False))
+    survoler(0.75)
+    assert abs(vue.volet - 0.25) < 0.01

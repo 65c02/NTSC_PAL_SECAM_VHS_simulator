@@ -1581,6 +1581,24 @@ pixels de haut pour que les lignes existent vraiment, le double pour qu'elles
 soient franches. Le lecteur affiche le chiffre, et le signale quand il passe
 sous la limite.
 
+**Le volet de comparaison**, enfin, est logé dans cette même passe, et il y
+tombe sur la même règle. Le lecteur peut couper la fenêtre en deux : à gauche la
+vidéo telle qu'elle est entrée, à droite le téléviseur, la coupure suivant le
+pointeur. Les deux moitiés sont échantillonnées à la **même coordonnée
+d'image**, courbure comprise — sans quoi on comparerait deux géométries au lieu
+de comparer deux signaux.
+
+L'écriture naturelle serait de sortir du shader dès qu'on est à gauche du
+volet : on économiserait les neuf taps de la réponse du tube et tout le reste.
+Elle est fausse. Le GLSL ne définit `dFdx` et `dFdy` que si les quatre fragments
+du groupe suivent le **même chemin** — ce sont des différences finies entre
+voisins, et un voisin sorti prématurément n'a plus de valeur à différencier. Or
+c'est de ces dérivées que dépendent l'intégrale des lignes de balayage
+ci-dessus et l'adoucissement du bord de dalle. Un retour anticipé rendrait donc
+les deux faux sur la colonne de pixels qui borde le volet. On calcule le côté
+téléviseur pour tout le monde, et l'on choisit à la fin : c'est la même
+contrainte que la marge généreuse du test de bord, pour la même raison.
+
 > **Dans le code** — `shaders/presentation.frag`.
 
 ### 12.9 Le shader dit-il la même chose que le simulateur ?
@@ -3470,7 +3488,7 @@ lecteur/          le lecteur vidéo temps réel (PyQt5 + OpenGL)
   app.py            la fenêtre et ses réglages, en onglets Image et Son
 
 gui/              l'interface PyQt5 d'analyse d'une image fixe
-tests/            300 tests, dont ceux cités tout au long de ce cours
+tests/            305 tests, dont ceux cités tout au long de ce cours
 docs/             ce document et son générateur de figures
 ```
 

@@ -37,6 +37,20 @@ uniform float u_demi_largeur;    // demi-largeur de l'image, en demi-diagonales
 uniform float u_demi_hauteur;
 uniform float u_coins;           // arrondi des coins, exposant de la superellipse
 
+// ------------------------------------------------------- volet de comparaison
+//
+// La vidéo telle qu'elle est entrée, avant tout traitement. Elle ne sert qu'au
+// mode comparaison : à gauche du volet on l'affiche telle quelle, à droite on
+// affiche le téléviseur.
+//
+// Les deux moitiés sont échantillonnées à la MÊME coordonnée d'image, courbure
+// comprise. C'est ce qui rend la comparaison honnête : un point de la scène
+// tombe au même endroit de la fenêtre des deux côtés du volet, et l'on ne
+// compare donc que ce qui a changé — le signal, jamais la géométrie.
+uniform sampler2D u_source_brute;
+uniform float u_comparaison;     // 0 ou 1
+uniform float u_volet;           // abscisse du volet, en fraction de fenêtre
+
 // ---------------------------------------------------------------- courbure
 
 // Position sur la dalle vue depuis l'œil, en demi-diagonales d'image.
@@ -139,13 +153,24 @@ void main()
     vec2 uv = (v_uv - u_decalage) / u_echelle;
     vec2 n = courber(uv * 2.0 - 1.0);
 
+    // Trait du volet, large de deux pixels PHYSIQUES quelle que soit la taille
+    // de la fenêtre — c'est un repère d'interface, pas un élément de l'image.
+    float trait = 0.0;
+    if (u_comparaison > 0.5)
+    {
+        float d = abs(v_uv.x - u_volet) * u_taille_ecran.x;
+        trait = 1.0 - smoothstep(0.5, 1.5, d);
+    }
+
     // Franchement au large : rien à calculer. La marge est volontairement
     // généreuse — les dérivées `dFdx`/`dFdy` se prennent sur des groupes de
     // quatre fragments, et un voisin sorti prématurément les rendrait fausses
     // tout le long du bord.
     if (max(abs(n.x), abs(n.y)) > 1.05)
     {
-        sortie = vec4(0.0, 0.0, 0.0, 1.0);
+        // Le trait continue hors de la dalle : on doit pouvoir attraper le
+        // volet même quand il sort de l'image, sur les bandes noires.
+        sortie = vec4(vec3(trait), 1.0);
         return;
     }
 
@@ -247,5 +272,24 @@ void main()
     }
 
     // Les deux effets assombrissent l'image ; on rend la lumière perdue.
-    sortie = vec4(clamp(rgb * u_luminosite * couverture, 0.0, 1.0), 1.0);
+    vec3 finale = rgb * u_luminosite;
+
+    // À gauche du volet : la vidéo, telle qu'elle est entrée dans la chaîne.
+    //
+    // Le choix se fait ICI, et non par un retour anticipé plus haut, alors
+    // qu'un retour serait moins coûteux. La raison est la même que pour la
+    // marge du bord : `dFdx` et `dFdy` se calculent sur des groupes de quatre
+    // fragments, et le GLSL ne les définit que si tout le groupe suit le même
+    // chemin. Sortir dès qu'on est à gauche du volet rendrait donc fausses,
+    // sur la colonne de pixels qui le borde, les dérivées dont dépendent
+    // l'intégrale des lignes de balayage et l'adoucissement du bord de dalle.
+    //
+    // Ni réponse du tube, ni halo, ni lignes, ni masque de ce côté-ci — et pas
+    // de luminosité non plus : ce réglage existe pour rendre la lumière que
+    // les lignes et le masque ont prise, et il n'y a rien à rendre ici.
+    if (u_comparaison > 0.5 && v_uv.x < u_volet)
+        finale = texture(u_source_brute, uv).rgb;
+
+    finale = clamp(finale * couverture, 0.0, 1.0);
+    sortie = vec4(mix(finale, vec3(1.0), trait), 1.0);
 }

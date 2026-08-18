@@ -177,6 +177,15 @@ class ParametresRendu:
     animer: bool = True
     conserver_proportions: bool = True
 
+    comparaison: bool = False
+    """Volet de comparaison : à gauche la vidéo, à droite le téléviseur.
+
+    La position du volet n'est **pas** ici, et c'est délibéré. Elle vient de la
+    souris, que seule la vue connaît ; la mettre dans cette dataclasse
+    obligerait le panneau de réglages à la relire et à la réécrire à chaque
+    application, et le premier clic sur un curseur ramènerait le volet où il
+    était. La vue la garde donc pour elle — voir `VueTelevision.volet`."""
+
     def parametres_tube(self):
         """Les mêmes réglages, sous la forme que `tvcolor.tube` attend.
 
@@ -268,7 +277,18 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._instants: list[float] = []
         self.duree_gpu = 0.0
         """Durée du dernier rendu mesurée par la carte graphique, en secondes."""
+
+        self.volet = 0.5
+        """Abscisse du volet de comparaison, en fraction de la largeur affichée.
+
+        Suit la souris quand `parametres.comparaison` est vrai, et garde sa
+        dernière valeur quand le pointeur quitte la vue — sans quoi le volet
+        sauterait au bord dès qu'on va chercher un réglage dans le panneau."""
+
         self.setMinimumSize(320, 240)
+        # Le survol suffit : on ne demande pas de tenir un bouton enfoncé pour
+        # déplacer le volet, on passe la souris sur l'image.
+        self.setMouseTracking(True)
 
     # ------------------------------------------------------------------
     # Cycle de vie OpenGL
@@ -488,9 +508,27 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self.update()
 
     def appliquer(self, parametres: ParametresRendu) -> None:
+        avant = self.parametres.comparaison
         self.parametres = parametres
+        if parametres.comparaison != avant:
+            # Le curseur en dit plus long qu'une case cochée à l'autre bout de
+            # la fenêtre : dès qu'il change de forme au-dessus de l'image, on
+            # comprend que le pointeur commande quelque chose.
+            if parametres.comparaison:
+                self.setCursor(QtCore.Qt.SplitHCursor)
+            else:
+                self.unsetCursor()
         self._reevaluer_reglage()
         self.update()
+
+    def mouseMoveEvent(self, evenement):  # noqa: N802 - API Qt
+        """Le volet suit le pointeur, en fraction de la largeur de la vue."""
+        if self.parametres.comparaison and self.width() > 0:
+            volet = min(max(evenement.x() / float(self.width()), 0.0), 1.0)
+            if volet != self.volet:
+                self.volet = volet
+                self.update()
+        super().mouseMoveEvent(evenement)
 
     def _largeur_affichee(self) -> int:
         """Largeur, en pixels physiques, qu'occupe réellement l'image à l'écran."""
@@ -1156,6 +1194,15 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             "u_coins",
             0.0 if p.arrondi_coins <= 0.0 else float(12.0 - 9.8 * min(p.arrondi_coins, 1.0)),
         )
+
+        programme.definir("u_comparaison", 1.0 if p.comparaison else 0.0)
+        programme.definir("u_volet", float(self.volet))
+        programme.definir("u_source_brute", 2)
+        if p.comparaison:
+            # La texture de source, et non la cible « tube » : à gauche du
+            # volet on montre le fichier tel qu'il est entré, caméra comprise
+            # dans ce qui est comparé.
+            self._texture_source.lier(2)
 
         programme.definir("u_halo", 1)
         programme.definir("u_halo_intensite", float(p.halo_intensite))
