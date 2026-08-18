@@ -443,3 +443,204 @@ def test_en_arret_sur_image_les_defauts_se_figent(vue):
     premiere = vue.image_rendue().astype(np.float64)
     seconde = vue.image_rendue().astype(np.float64)
     assert np.abs(seconde - premiere).mean() < 0.01
+
+
+# ---------------------------------------------------------------------------
+# La caméra à tubes
+# ---------------------------------------------------------------------------
+
+def _pousser(vue, images, **reglages):
+    """Fait défiler une suite d'images devant la caméra, et rend la dernière.
+
+    Le tube est le seul étage de ce moteur qui garde un état d'une image à
+    l'autre : le mesurer suppose donc de lui en donner plusieurs, et non de
+    rendre une image isolée comme partout ailleurs.
+    """
+    from lecteur.vue_gl import ParametresRendu
+
+    vue.appliquer(ParametresRendu(animer=False, **reglages))
+    rendu = None
+    for image in images:
+        vue.definir_image((np.clip(image, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+        rendu = vue.image_rendue()
+    assert rendu is not None
+    return rendu.astype(np.float64) / 255.0
+
+
+def test_tube_transparent_sur_scene_fixe(vue):
+    """Une caméra à tubes ne dégrade pas une image immobile.
+
+    Même invariant que dans le simulateur de référence, et même raison : à
+    l'équilibre, ce que le faisceau évacue est exactement ce que la trame a
+    déposé. Ici l'égalité n'est pas exacte — huit bits en sortie, seize en
+    virgule flottante dans les tampons de charge — mais elle doit tenir au
+    niveau de quantification près.
+    """
+    image = mires.barres_couleur(288, 384)
+    sans = _pousser(vue, [image] * 3, norme="PAL-BG")
+    # Sans reflet à reconstruire ni désalignement des trois tubes : on mesure
+    # ici la transparence du MÉCANISME DE CHARGE, et les deux autres défauts
+    # ont leurs propres tests.
+    avec = _pousser(
+        vue, [image] * 3, norme="PAL-BG", tube_actif=True,
+        tube_eclat=0.0, tube_desalignement=0.0,
+    )
+
+    ecart = np.abs(avec - sans)
+    # On mesure l'INTÉRIEUR des barres, et pas leurs transitions. Le passage
+    # d'une barre à l'autre est un échelon franc que le composite fait sonner ;
+    # un demi-échelon de quantification à l'entrée y déplace le crénelage de
+    # deux niveaux, ce qui ne dit rien de la transparence du tube et tout de la
+    # raideur de la transition. À l'intérieur des barres, l'écart tombe à un
+    # niveau sur 255.
+    largeur = ecart.shape[1]
+    interieurs = np.concatenate([
+        ecart[:, int(k * largeur / 8) + 20 : int((k + 1) * largeur / 8) - 20]
+        for k in range(8)
+    ], axis=1)
+    assert interieurs.max() < 2.0 / 255.0
+    assert np.percentile(ecart, 99.0) < 2.0 / 255.0
+
+
+# Comme dans `tests/test_tube.py` : ces essais mesurent le MÉCANISME de la
+# comète, et demandent donc un reflet franc et une optique parfaite. Le réglage
+# par défaut est délibérément léger, calé sur une capture d'émission de 1972.
+COMETE = dict(tube_eclat=25.0, tube_diffusion=0.0)
+
+
+def _reflet_qui_traverse(n_images=16):
+    """Une scène de concert : sombre, avec un éclat qui traverse le cadre."""
+    images = []
+    for n in range(n_images):
+        image = np.full((288, 384, 3), 0.10)
+        colonne = 120 + 8 * n
+        image[140:148, colonne:colonne + 8] = 1.0
+        images.append(image)
+    return images
+
+
+def _derriere_le_reflet(rendu):
+    """La bande d'image que le reflet vient de quitter, en coordonnées relatives.
+
+    Le rendu sort à la géométrie de la NORME — 921 points pour 576 lignes en
+    PAL — et non à celle de la source : toute mesure doit donc se faire en
+    fractions d'image.
+
+    La fenêtre retenue tient entre le bout de la traînée et la tête du reflet.
+    Mesuré : sans caméra le reflet occupe les fractions 0,625 à 0,644 et rien
+    d'autre ; avec, la traînée s'étend en arrière d'une fraction qui dépend de
+    la capacité de la cible — six blancs, soit 3,6 trames. La fenêtre se tient
+    donc juste derrière la tête.
+    """
+    hauteur, largeur = rendu.shape[:2]
+    bande = rendu[int(0.47 * hauteur):int(0.53 * hauteur), :, 0].max(axis=0)
+    return bande[int(0.55 * largeur):int(0.62 * largeur)]
+
+
+def test_tube_laisse_une_queue_de_comete(vue):
+    """Un reflet qui se déplace laisse derrière lui une traînée blanche.
+
+    Mesuré sur la portion d'image que le reflet a quittée : 0,10 sans caméra —
+    c'est le fond de la scène — et une traînée franche avec.
+    """
+    images = _reflet_qui_traverse()
+    sans = _derriere_le_reflet(_pousser(vue, images, norme="PAL-BG"))
+    avec = _derriere_le_reflet(
+        _pousser(vue, images, norme="PAL-BG", tube_actif=True, **COMETE)
+    )
+
+    assert sans.max() < 0.3
+    assert avec.mean() > 0.6
+    assert avec.max() > 0.95
+
+
+def test_anti_comete_supprime_la_trainee_sur_carte_graphique(vue):
+    """Le circuit de 1976, sur la carte graphique comme dans la référence."""
+    images = _reflet_qui_traverse()
+    avec = _derriere_le_reflet(
+        _pousser(vue, images, norme="PAL-BG", tube_actif=True, **COMETE))
+    acte = _derriere_le_reflet(
+        _pousser(vue, images, norme="PAL-BG", tube_actif=True, **COMETE,
+                 tube_anti_comete=1.0)
+    )
+
+    assert acte.max() < 0.3
+    assert avec.mean() > 5.0 * acte.mean()
+
+
+def test_la_carte_graphique_distingue_les_cameras(vue):
+    """Deux modèles opposés doivent donner deux images opposées.
+
+    Le vidicon de 1966 traîne et n'a aucun anti-comète ; le Saticon à canon
+    diode de 1984 encaisse deux cent soixante-douze fois le blanc. Si le shader
+    ne les séparait pas, c'est que le genou de rémanence ou la capacité du
+    faisceau ne lui parviendraient pas.
+    """
+    from tvcolor.tube import obtenir_camera
+
+    images = _reflet_qui_traverse()
+
+    def rendre_avec(code):
+        camera = obtenir_camera(code)
+        return _derriere_le_reflet(_pousser(
+            vue, images, norme="PAL-BG", tube_actif=True, **COMETE,
+            tube_faisceau=camera.faisceau,
+            tube_anti_comete=camera.anti_comete,
+            tube_remanence=camera.remanence,
+            tube_genou=camera.genou_remanence,
+            tube_biais=camera.lumiere_de_biais,
+            tube_desalignement=camera.desalignement,
+        ))
+
+    vieille = rendre_avec("vidicon")
+    moderne = rendre_avec("saticon-diode")
+
+    assert vieille.mean() > 0.6      # une traînée franche
+    assert moderne.max() < 0.3       # plus rien derrière le reflet
+
+
+def _reflet_rapide(saut=12, taille=3, n_images=14):
+    """Un reflet petit et rapide : le cas où la traînée sort en chapelet."""
+    images = []
+    for k in range(n_images):
+        image = np.full((288, 384, 3), 0.06)
+        x = 40 + saut * k
+        image[140 : 140 + taille, x : x + taille] = 1.0
+        images.append(image)
+    return images
+
+
+def _continuite(rendu):
+    """(pixels allumés, étendue) de la traînée sur la bande centrale."""
+    hauteur, largeur = rendu.shape[:2]
+    bande = rendu[int(0.47 * hauteur):int(0.53 * hauteur), :, 0].max(axis=0)
+    allumes = np.flatnonzero(bande > 0.6)
+    if allumes.size == 0:
+        return 0, 1
+    return allumes.size, allumes.max() - allumes.min() + 1
+
+
+def test_le_pont_temporel_rend_la_trainee_continue(vue):
+    """Le défaut, puis sa correction, mesurés sur la carte graphique.
+
+    Une vidéo n'a que vingt-cinq images par seconde alors que la cible intègre
+    en continu : sans pont, la charge se dépose par paquets espacés et la
+    traînée n'est allumée que sur un cinquième de son étendue — une file de
+    reflets distincts au lieu d'une traînée.
+    """
+    images = _reflet_rapide()
+    sans = _continuite(_pousser(
+        vue, images, norme="PAL-BG", tube_actif=True, **COMETE,
+        tube_desalignement=0.0, tube_pont=0.0,
+    ))
+    avec = _continuite(_pousser(
+        vue, images, norme="PAL-BG", tube_actif=True, **COMETE,
+        tube_desalignement=0.0, tube_pont=24.0,
+    ))
+
+    assert sans[0] / sans[1] < 0.35
+    assert avec[0] / avec[1] > 0.85
+    # L'étendue, elle, change peu — les paquets couvraient déjà tout le
+    # trajet. C'est ce qu'il y a ENTRE eux que le pont change : quatre fois
+    # plus de pixels allumés pour la même longueur de traînée.
+    assert avec[0] > 4.0 * sans[0]

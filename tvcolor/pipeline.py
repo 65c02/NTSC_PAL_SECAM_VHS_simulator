@@ -23,6 +23,7 @@ from . import colorimetrie as col
 from . import decodeur as dec
 from . import encodeur as enc
 from . import filtres
+from . import tube as tube_mod
 from . import vhs as vhs_mod
 from .constantes import Norme, obtenir_norme
 
@@ -32,6 +33,13 @@ class Parametres:
     """Tous les réglages de la chaîne, en un seul objet."""
 
     norme: str = "PAL-BG"
+
+    tube: tube_mod.ParametresTube = field(default_factory=tube_mod.ParametresTube)
+    """La caméra, tout en amont — avant même la correction de gamma.
+
+    Sa place n'est pas négociable : le tube analyseur est ce qui **fabrique**
+    le signal, en mesurant la charge que la lumière a soutirée à sa cible. Tout
+    ce qui suit, matriçage compris, travaille sur ce qu'il a bien voulu rendre."""
 
     encodage: enc.ParametresEncodage = field(default_factory=enc.ParametresEncodage)
     canal: canal_mod.ParametresCanal = field(default_factory=canal_mod.ParametresCanal)
@@ -120,6 +128,7 @@ def encoder_decoder(image_srgb: np.ndarray, params: Parametres | None = None) ->
         lineaire = col.convertir_primaires(
             lineaire, params.primaires_source, norme.primaires
         )
+    lineaire = tube_mod.appliquer(lineaire, params.tube)
     gamma = norme.gamma_affichage if params.simuler_gamma else 1.0
     rgb_prime = col.oetf_camera(lineaire, gamma)
 

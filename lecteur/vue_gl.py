@@ -46,6 +46,15 @@ from .normes_gl import ReglageGL, longueur_vhs, noyaux_vhs, reglage, sigma_du_tu
 FICHIER_NORME = {"NTSC": "ntsc.glsl", "PAL": "pal.glsl", "SECAM": "secam.glsl"}
 
 UNITE_SOURCE, UNITE_COMPOSITE, UNITE_PREPARE, UNITE_SCAN, UNITE_VHS = 0, 1, 2, 3, 4
+UNITE_CHARGE, UNITE_ECLAIREMENT, UNITE_ECLAIREMENT_AVANT = 5, 6, 7
+
+CHAMPS_AMORCAGE = 24
+"""Trames de mise en régime de la cible, quand elle vient d'être allouée.
+
+Une cible vide se décharge mal : la première trame sortirait trop sombre.
+Une vraie caméra a le même défaut à l'allumage, mais on ne peut pas se le
+permettre sur une image arrêtée, où il n'y aura jamais de trame suivante
+pour rattraper. Vingt-quatre suffisent : le résidu est alors sous 10⁻⁶."""
 
 
 @dataclass
@@ -53,7 +62,7 @@ class ParametresRendu:
     """Réglages modifiables à chaud, sans recompiler les shaders."""
 
     norme: str = "PAL-BG"
-    qualite: str = "normale"
+    qualite: str = "haute"
 
     separateur: int = 0            # 0 = peigne, 1 = réjecteur
     ligne_retard: bool = True      # PAL-D contre PAL-S
@@ -115,8 +124,85 @@ class ParametresRendu:
     dans l'esprit de cette dataclasse — un seul objet que l'interface remplit
     et que le moteur consomme."""
 
+    tube_actif: bool = False
+    tube_modele: str = "plumbicon-reportage"
+    tube_faisceau: float = 1.30
+    tube_anti_comete: float = 0.0
+    tube_remanence: float = 0.35
+    tube_genou: float = 0.10
+    tube_charge_max: float = 6.0
+    tube_pont: float = 0.0
+    """Portée du pont temporel, en pixels. **Nul par défaut**, et c'est un choix.
+
+    C'est une interpolation et non un phénomène : elle comble ce que
+    l'échantillonnage temporel de la source a laissé vide, et elle le fait bien
+    sur un reflet isolé. Sur une image chargée, en revanche, elle diverge du
+    simulateur de référence — 41 % de blanc saturé contre 29 % sur une scène
+    chaude en mouvement — parce que la tache de diffusion de la carte graphique
+    est 23 % plus large que la gaussienne exacte, et que le pont amplifie cet
+    écart le long de ses huit directions.
+
+    On ne l'allume donc que pour ce à quoi il sert : un reflet vif et rapide qui
+    sortirait en chapelet. Le reste du temps, il coûte plus qu'il ne rend."""
+    tube_masquage: float = 1.0
+    tube_biais: float = 0.02
+    tube_eclat: float = 2.5
+    tube_seuil: float = 0.94
+    tube_diffusion: float = 0.009
+    tube_voile: float = 0.35
+    tube_voile_rayon: float = 0.06
+    tube_desalignement: float = 2.0
+    """La caméra à tubes, tout en amont de la chaîne.
+
+    `tube_modele` n'est qu'une étiquette : c'est l'interface qui, en choisissant
+    un modèle, pose les six réglages qui suivent. Le moteur ne consulte jamais
+    ce champ — il ne doit y avoir qu'une façon de décrire une caméra, et ce sont
+    ses caractéristiques.
+
+    Mêmes réglages que `tvcolor.tube.ParametresTube`, à plat. `desalignement`
+    est ici en pixels au coin de l'image, comme dans le simulateur de
+    référence ; le shader, lui, reçoit une fraction d'écran."""
+
+    cadence_source: float = 0.0
+    """Images par seconde de la source, ou 0 si on l'ignore.
+
+    Sert uniquement à la caméra, mais elle en a absolument besoin. Un tube se
+    décharge une fois par TRAME — cinquante fois par seconde en 625 lignes — et
+    non une fois par image. Une vidéo à 25 im/s ne fournit donc qu'une image
+    pour deux trames : sans cette cadence, la cible n'avancerait que d'une trame
+    par image et toutes les traînées dureraient exactement deux fois trop
+    longtemps. C'est la faute qu'avait le premier jet, et elle ne se voyait pas
+    sur une mesure faite en trames — seulement à la montre."""
+
     animer: bool = True
     conserver_proportions: bool = True
+
+    def parametres_tube(self):
+        """Les mêmes réglages, sous la forme que `tvcolor.tube` attend.
+
+        Déléguée pour la même raison que `bandes_vhs` : il n'y a pas deux
+        tables de constantes dans ce projet, et `capacite()` — qui décide de la
+        longueur des traînées — ne doit être écrite qu'une fois.
+        """
+        from tvcolor.tube import ParametresTube
+
+        return ParametresTube(
+            actif=self.tube_actif,
+            faisceau=self.tube_faisceau,
+            anti_comete=self.tube_anti_comete,
+            remanence=self.tube_remanence,
+            genou_remanence=self.tube_genou,
+            charge_maximale=self.tube_charge_max,
+            diffusion=self.tube_diffusion,
+            voile=self.tube_voile,
+            voile_rayon=self.tube_voile_rayon,
+            pont_temporel=self.tube_pont,
+            masquage=self.tube_masquage,
+            lumiere_de_biais=self.tube_biais,
+            eclat_reflets=self.tube_eclat,
+            seuil_reflets=self.tube_seuil,
+            desalignement=self.tube_desalignement,
+        )
 
     def bandes_vhs(self) -> tuple[float, float]:
         """Bandes luma et chroma de la cassette, usure et générations comprises.
@@ -165,6 +251,11 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._image: np.ndarray | None = None
         self._image_a_televerser = False
         self._numero_image = 0
+        self._images_recues = 0
+        self._tube_image = -1
+        self._tube_signature: tuple | None = None
+        self._tube_a_amorcer = True
+        self._dette_champs = 0.0
         self._pret = False
         self._recompiler = True
 
@@ -212,6 +303,40 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         )
         self._programme_halo_flou = Programme(
             self._sommet, assembler_simple("bloom.glsl"), "halo/flou"
+        )
+        # Le tube analyseur ne dépend ni de la norme ni de la longueur des
+        # noyaux : il est compilé une fois pour toutes. Deux programmes, parce
+        # que la passe de charge et la passe de signal écrivent deux choses
+        # différentes à partir du même calcul.
+        self._programme_tube_emission = Programme(
+            self._sommet,
+            assembler_simple("tube.glsl", {"PASSE_EMISSION": None}),
+            "tube/émission",
+        )
+        self._programme_tube_eclairement = Programme(
+            self._sommet,
+            assembler_simple("tube.glsl", {"PASSE_ECLAIREMENT": None}),
+            "tube/éclairement",
+        )
+        self._programme_tube_pont = Programme(
+            self._sommet,
+            assembler_simple("tube.glsl", {"PASSE_PONT": None}),
+            "tube/pont",
+        )
+        self._programme_tube_signal = Programme(
+            self._sommet, assembler_simple("tube.glsl"), "tube/signal"
+        )
+        self._programme_tube_charge = Programme(
+            self._sommet,
+            assembler_simple("tube.glsl", {"PASSE_CHARGE": None}),
+            "tube/charge",
+        )
+        self._programmes_tube = (
+            self._programme_tube_emission,
+            self._programme_tube_eclairement,
+            self._programme_tube_pont,
+            self._programme_tube_signal,
+            self._programme_tube_charge,
         )
         # Chronomètre GPU. Mesurer le temps de rendu avec l'horloge du
         # processeur ne veut rien dire : les commandes OpenGL sont empilées et
@@ -286,6 +411,31 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         self._cibles["vhs_b"] = Cible(largeur, hauteur, GL.GL_R16F)
         self._cibles["resultat"] = Cible(largeur, hauteur, GL.GL_RGBA8)
 
+        # La caméra : le signal lu, et les deux tampons de charge. Ce sont les
+        # seules textures de ce moteur qui survivent d'une image à l'autre —
+        # c'est la charge restée sur la cible qui fait la queue de comète.
+        # Trente-deux bits, et non seize. La colorimétrie de la caméra fait un
+        # aller-retour matriciel — contamination des filtres, puis son inverse —
+        # dont la reconstruction procède par SOUSTRACTION : les erreurs
+        # relatives d'un demi-flottant, dérisoires prises une à une, s'y
+        # amplifient et coûtaient quatre niveaux sur 255 au milieu d'une barre
+        # de couleur. La charge et l'éclairement montent donc en simple
+        # précision. Mesuré : l'écart retombe sous le niveau de quantification.
+        self._cibles["tube"] = Cible(largeur, hauteur, GL.GL_RGBA16F)
+        self._cibles["eclairement"] = Cible(largeur, hauteur, GL.GL_RGBA32F)
+        # Deux tampons pour l'éclairement d'avant le pont : celui-ci et celui
+        # de l'image précédente. Le pont ne consulte qu'eux, jamais la charge —
+        # c'est ce qui l'empêche de se nourrir de sa propre sortie.
+        # Seize bits suffisent ici — l'émission est une fraction dans [0, 1] —
+        # et la pyramide de mipmaps se reconstruit à chaque image : la moitié
+        # de la bande passante s'y voit tout de suite.
+        self._cibles["emis"] = Cible(largeur, hauteur, GL.GL_RGBA16F, mipmaps=True)
+        self._cibles["eclairement_a"] = Cible(largeur, hauteur, GL.GL_RGBA32F)
+        self._cibles["eclairement_b"] = Cible(largeur, hauteur, GL.GL_RGBA32F)
+        for nom in ("charge_a", "charge_b"):
+            self._cibles[nom] = Cible(largeur, hauteur, GL.GL_RGBA32F)
+        self._tube_a_amorcer = True
+
         # Le halo travaille au quart de la résolution. Il est flou par
         # définition : y consacrer la pleine résolution ne changerait rien à
         # l'image et coûterait seize fois plus.
@@ -306,6 +456,13 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             programme.definir("u_scan", UNITE_SCAN)
             programme.definir("u_vhs_entree", UNITE_VHS)
 
+        for programme in self._programmes_tube:
+            programme.utiliser()
+            programme.definir("u_source", UNITE_SOURCE)
+            programme.definir("u_charge", UNITE_CHARGE)
+            programme.definir("u_eclairement", UNITE_ECLAIREMENT)
+            programme.definir("u_eclairement_avant", UNITE_ECLAIREMENT_AVANT)
+
         self._programme_scan.utiliser()
         self._programme_scan.definir("u_entree", 0)
         self._programme_presentation.utiliser()
@@ -321,6 +478,11 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         """Fournit l'image à afficher, en RGB 8 bits, de forme (H, W, 3)."""
         self._image = image
         self._image_a_televerser = True
+        # Compté à part du numéro d'image : celui-ci sert la phase de
+        # sous-porteuse et n'avance pas quand l'animation est arrêtée, alors
+        # que la cible du tube doit se décharger chaque fois qu'une image
+        # nouvelle se présente, et une seule fois.
+        self._images_recues += 1
         if self.parametres.animer:
             self._numero_image += 1
         self.update()
@@ -475,6 +637,8 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
             self._image_a_televerser = False
 
         if self._image is not None:
+            if self.parametres.tube_actif:
+                self._passes_tube()
             if self._reglage.famille == "SECAM":
                 self._passe_preparation()
                 self._passes_scan()
@@ -538,6 +702,221 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         programme.definir("u_separateur", int(p.separateur))
         programme.definir("u_ligne_retard", int(p.ligne_retard))
 
+    # -- la caméra ------------------------------------------------------
+
+    def _lier_scene(self) -> None:
+        """Branche sur l'unité de source ce que le codeur doit voir.
+
+        Avec une caméra à tubes, ce n'est plus le fichier : c'est ce que le
+        faisceau a bien voulu rendre de la cible.
+        """
+        if self.parametres.tube_actif:
+            self._cibles["tube"].lier(UNITE_SOURCE)
+        else:
+            self._texture_source.lier(UNITE_SOURCE)
+
+    def _uniformes_tube(self, programme: Programme) -> None:
+        from tvcolor.tube import CONTAMINATION, RAYON_REFLET, matrice_masquage
+
+        p = self.parametres
+        largeur, hauteur = self._reglage.largeur, self._reglage.hauteur
+
+        # Le rayon est isotrope À L'ÉCRAN, donc en 4:3, et non sur la grille de
+        # calcul, qui est étirée : 920 points pour 576 lignes.
+        rayon_y = RAYON_REFLET
+        rayon_x = RAYON_REFLET * 3.0 / 4.0
+
+        # Chacun des seize points de la couronne représente un morceau du
+        # voisinage, et doit donc être lu dans un mipmap qui moyenne déjà ce
+        # morceau : le tiers du rayon, mesuré sur la texture source.
+        pixels = max(2.0, rayon_y * max(2, self._texture_source.hauteur) / 3.0)
+
+        programme.utiliser()
+        programme.definir("u_taille", (float(largeur), float(hauteur)))
+        programme.definir("u_tube_rayon", (rayon_x, rayon_y))
+        programme.definir("u_tube_lod", float(math.log2(pixels)))
+        programme.definir("u_tube_faisceau", float(p.parametres_tube().capacite()))
+        programme.definir("u_tube_remanence", float(p.tube_remanence))
+        programme.definir("u_tube_genou", float(p.tube_genou))
+        programme.definir("u_tube_charge_max", float(p.tube_charge_max))
+        # La portée du pont est donnée en pixels d'une image 4:3 à pixels
+        # carrés ; en coordonnées de texture elle est donc anisotrope, la
+        # grille de calcul étant étirée.
+        pont = float(p.tube_pont)
+        programme.definir(
+            "u_tube_pont", (pont / (4.0 / 3.0 * hauteur), pont / hauteur)
+        )
+        # Les deux matrices viennent de `tvcolor.tube` : la contamination des
+        # filtres et son antidote électronique n'existent qu'à un seul endroit.
+        programme.definir("u_tube_filtres", CONTAMINATION)
+        programme.definir("u_tube_masquage", matrice_masquage(p.tube_masquage))
+        programme.definir("u_tube_biais", float(p.tube_biais))
+        programme.definir("u_tube_eclat", float(p.tube_eclat))
+        programme.definir("u_tube_seuil", float(p.tube_seuil))
+        # Les rayons sont donnés en fraction de la HAUTEUR, et doivent donc
+        # être anisotropes en coordonnées de texture : la grille est étirée.
+        # Un niveau de mipmap est une moyenne de boîte : une boîte de largeur
+        # L a pour écart-type L/√12. Un rayon sigma donné en fraction de la
+        # HAUTEUR correspond donc au niveau log2(√12 · sigma · hauteur).
+        for nom, rayon in (("coeur", p.tube_diffusion), ("voile", p.tube_voile_rayon)):
+            if rayon <= 0.0:
+                programme.definir(f"u_tube_lod_{nom}", 0.0)
+                programme.definir(f"u_tube_pas_{nom}", (0.0, 0.0))
+                continue
+            # Le « − 1 » n'est pas un ajustement : la tente à quatre prises
+            # DOUBLE l'écart-type du noyau. Une boîte de côté L a l'écart-type
+            # L/√12 = 0,289 L ; les prises à un demi-texel en ajoutent 0,5 L, et
+            # les variances s'additionnent — soit 0,577 L au total. Il faut donc
+            # une boîte deux fois plus petite. Sans cette division, la carte
+            # graphique étalait deux fois trop : 38 % de blanc sur une scène
+            # chaude contre 29 % pour le simulateur de référence.
+            cote = math.sqrt(12.0) * rayon * hauteur / 2.0
+            niveau = max(0.0, math.log2(max(cote, 1.0)))
+            programme.definir(f"u_tube_lod_{nom}", float(niveau))
+            # Un texel de ce niveau, en coordonnées de texture.
+            echelle = 2.0**niveau
+            programme.definir(
+                f"u_tube_pas_{nom}", (echelle / largeur, echelle / hauteur)
+            )
+        programme.definir("u_tube_voile", float(p.tube_voile))
+        # Le désalignement est donné en pixels au coin ; le shader travaille en
+        # fraction d'écran, l'échelle étant rapportée à la demi-diagonale.
+        demi_diagonale = 0.5 * math.hypot(largeur, hauteur)
+        programme.definir("u_tube_ecart", float(p.tube_desalignement) / demi_diagonale)
+
+    def _passe_eclairement(self) -> None:
+        """Ce que l'objectif dépose vraiment sur la cible, pont temporel compris.
+
+        La passe chère, et la seule : seize points de couverture pour
+        reconnaître un reflet, et jusqu'à cent vingt-huit sondages pour combler
+        ce que l'échantillonnage de la source a laissé vide. Elle ne tourne
+        qu'une fois par image reçue ; les deux autres ne lisent que son
+        résultat.
+        """
+        # 1. L'émission : l'excès, une fois la porte de couverture passée. La
+        #    porte s'applique donc à la SOURCE de la lumière et non à sa
+        #    destination — l'inverse laissait une barre blanche déborder sur sa
+        #    voisine, et coûtait la transparence sur mire immobile.
+        self._cibles["emis"].activer()
+        self._programme_tube_emission.utiliser()
+        self._texture_source.lier(UNITE_SOURCE)
+        self._quad.dessiner()
+        self._cibles["emis"].generer_mipmaps()
+
+        # 2. L'optique : le cœur étroit et le voile large de l'objectif.
+        source, avant = self._cibles["eclairement_a"], self._cibles["eclairement_b"]
+        source.activer()
+        self._programme_tube_eclairement.utiliser()
+        self._texture_source.lier(UNITE_SOURCE)
+        self._cibles["emis"].lier(UNITE_ECLAIREMENT)
+        self._quad.dessiner()
+
+        # Le pont dans SA passe, et lisant l'éclairement déjà filtré par la
+        # porte de couverture. Le faire dans la passe précédente l'obligeait à
+        # recalculer l'éclairement de ses sondages SANS la porte, faute de
+        # pouvoir la refaire cent vingt-huit fois : un grand aplat écrêté
+        # comptait alors comme un reflet neuf, et la tache blanche mangeait
+        # l'image de proche en proche — 23 % à la première image, 85 % à la
+        # dixième.
+        self._cibles["eclairement"].activer()
+        self._programme_tube_pont.utiliser()
+        source.lier(UNITE_ECLAIREMENT)
+        avant.lier(UNITE_ECLAIREMENT_AVANT)
+        self._quad.dessiner()
+
+        self._cibles["eclairement_a"], self._cibles["eclairement_b"] = avant, source
+
+    def _passe_charge(self) -> None:
+        """Une trame de pose : la cible intègre, le faisceau évacue ce qu'il peut."""
+        source = self._cibles["charge_a"]
+        destination = self._cibles["charge_b"]
+        destination.activer()
+        self._programme_tube_charge.utiliser()
+        source.lier(UNITE_CHARGE)
+        self._cibles["eclairement"].lier(UNITE_ECLAIREMENT)
+        self._quad.dessiner()
+        self._cibles["charge_a"], self._cibles["charge_b"] = destination, source
+
+    def _passe_signal_tube(self) -> None:
+        """Le courant de faisceau, c'est-à-dire le signal vidéo."""
+        self._cibles["tube"].activer()
+        self._programme_tube_signal.utiliser()
+        self._cibles["charge_a"].lier(UNITE_CHARGE)
+        self._cibles["eclairement"].lier(UNITE_ECLAIREMENT)
+        self._quad.dessiner()
+
+    def _passes_tube(self) -> None:
+        """La caméra, en une ou deux passes selon qu'une image est arrivée.
+
+        L'ORDRE COMPTE, et c'est le seul piège de cette passe. Les deux
+        programmes lisent la charge que la trame PRÉCÉDENTE a laissée : le
+        signal doit donc être lu avant que la charge ne soit mise à jour. Dans
+        l'autre ordre, le signal serait celui d'une cible déjà déchargée —
+        l'image sortirait à peu près juste, et la traînée aurait une trame de
+        moins que ce que le modèle prescrit.
+
+        Et l'on n'avance la cible que pour une image RÉELLEMENT nouvelle : sans
+        cela, la longueur de la traînée dépendrait du nombre de redessins, donc
+        de la taille de la fenêtre et de l'humeur du gestionnaire de fenêtres.
+        """
+        p = self.parametres
+        # `tube_genou` doit figurer ici : l'oublier ferait garder à la cible
+        # la charge laissée par un tout autre tube.
+        signature = (
+            p.tube_faisceau, p.tube_anti_comete, p.tube_remanence, p.tube_genou,
+            p.tube_charge_max, p.tube_biais, p.tube_eclat, p.tube_seuil,
+            p.tube_desalignement, p.tube_pont, p.tube_masquage,
+            p.tube_diffusion, p.tube_voile, p.tube_voile_rayon,
+        )
+        if signature != self._tube_signature:
+            self._tube_signature = signature
+            self._tube_a_amorcer = True
+
+        for programme in self._programmes_tube:
+            self._uniformes_tube(programme)
+
+        if self._tube_a_amorcer:
+            self._cibles["charge_a"].effacer()
+            self._cibles["charge_b"].effacer()
+            self._passe_eclairement()
+            for _ in range(CHAMPS_AMORCAGE):
+                self._passe_charge()
+            self._tube_a_amorcer = False
+            self._tube_image = self._images_recues
+            self._passe_signal_tube()
+        elif self._images_recues != self._tube_image:
+            # L'éclairement se recalcule sur la charge d'AVANT le dépôt : c'est
+            # elle qui porte la trace que le pont doit rejoindre.
+            self._passe_eclairement()
+            self._passe_signal_tube()
+            for _ in range(self._champs_a_rattraper()):
+                self._passe_charge()
+            self._tube_image = self._images_recues
+        else:
+            self._passe_signal_tube()
+
+    def _champs_a_rattraper(self) -> int:
+        """Nombre de trames que la cible doit poser pour l'image qui arrive.
+
+        Une cible se décharge à la CADENCE TRAME de la norme — cinquante fois
+        par seconde en 625 lignes — et la vidéo, elle, arrive à sa propre
+        cadence. Une source à 25 im/s vaut donc deux trames par image, et une
+        source à 24 im/s en vaut 2,08 : on garde la partie fractionnaire d'une
+        image à l'autre plutôt que de l'arrondir à chaque fois, sans quoi la
+        durée des traînées dériverait de 4 %.
+
+        Sans cadence connue — une image fixe, un banc de mesure — on s'en tient
+        à une trame par image, ce qui est la seule convention défendable.
+        """
+        cadence = float(self.parametres.cadence_source)
+        if cadence <= 0.0:
+            return 1
+
+        self._dette_champs += self._reglage.norme.f_trame / cadence
+        champs = int(self._dette_champs)
+        self._dette_champs -= champs
+        return champs
+
     # -- passes ---------------------------------------------------------
 
     def _passe_preparation(self) -> None:
@@ -546,7 +925,7 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         programme = self._programmes["preparation"]
         programme.utiliser()
         self._uniformes_communs(programme)
-        self._texture_source.lier(UNITE_SOURCE)
+        self._lier_scene()
         self._quad.dessiner()
 
     def _passes_scan(self) -> None:
@@ -588,7 +967,7 @@ class VueTelevision(QtWidgets.QOpenGLWidget):
         programme = self._programmes["codage"]
         programme.utiliser()
         self._uniformes_communs(programme)
-        self._texture_source.lier(UNITE_SOURCE)
+        self._lier_scene()
         if self._reglage.famille == "SECAM":
             self._cibles["prepare"].lier(UNITE_PREPARE)
             GL.glActiveTexture(GL.GL_TEXTURE0 + UNITE_SCAN)

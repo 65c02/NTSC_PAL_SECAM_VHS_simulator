@@ -16,6 +16,12 @@ from tvcolor.constantes import NORMES, obtenir_norme
 from tvcolor.decodeur import ParametresDecodage
 from tvcolor.encodeur import ParametresEncodage
 from tvcolor.pipeline import Parametres
+from tvcolor.tube import (
+    CAMERA_PAR_DEFAUT,
+    CAMERAS,
+    ParametresTube,
+    obtenir_camera,
+)
 from tvcolor.vhs import ParametresVHS
 
 from .widgets_base import Curseur, Groupe, note
@@ -60,6 +66,10 @@ class PanneauParametres(QtWidgets.QTabWidget):
         self._construire_codage()
         self._construire_decodage()
         self._construire_colorimetrie()
+        self._colonne.addStretch(1)
+
+        self._colonne = self._nouvelle_page("Caméra")
+        self._construire_camera()
         self._colonne.addStretch(1)
 
         self._colonne = self._nouvelle_page("Bruit")
@@ -169,6 +179,177 @@ class PanneauParametres(QtWidgets.QTabWidget):
             "ce qu'il donne à l'oreille."
         ))
         self._colonne.addWidget(groupe)
+
+    def _construire_camera(self) -> None:
+        """La caméra à tubes — le premier maillon, bien avant le codeur."""
+        groupe = Groupe("Caméra")
+
+        self.case_tube = QtWidgets.QCheckBox("Filmer avec une caméra à tubes")
+        self.case_tube.toggled.connect(self._signaler)
+        groupe.ajouter(self.case_tube)
+
+        self.combo_camera = QtWidgets.QComboBox()
+        self.combo_camera.addItem("Réglage libre", None)
+        for camera in CAMERAS.values():
+            self.combo_camera.addItem(f"{camera.annee} — {camera.nom}", camera.code)
+        self.combo_camera.setCurrentIndex(self.combo_camera.findData(CAMERA_PAR_DEFAUT))
+        self.combo_camera.currentIndexChanged.connect(self._sur_modele_camera)
+        groupe.ajouter(QtWidgets.QLabel("Modèle"))
+        groupe.ajouter(self.combo_camera)
+
+        self.etiquette_camera = note("")
+        groupe.ajouter(self.etiquette_camera)
+        self._colonne.addWidget(groupe)
+
+        # Les valeurs de départ viennent de la table des caméras, et non de
+        # constantes recopiées ici : le menu afficherait sinon un modèle dont
+        # les curseurs ne diraient pas tout à fait la même chose.
+        depart = obtenir_camera(CAMERA_PAR_DEFAUT)
+
+        groupe = Groupe("Le matériel")
+        self.faisceau = Curseur(
+            "Courant du faisceau", 1.0, 4.0, depart.faisceau, 0.05, " × blanc", 2)
+        self.anti_comete = Curseur(
+            "Circuit anti-comète", 0.0, 1.0, depart.anti_comete, 0.05, "", 2)
+        self.remanence = Curseur(
+            "Rémanence du tube", 0.0, 0.9, depart.remanence, 0.05, "", 2)
+        self.genou_remanence = Curseur(
+            "Genou de rémanence", 0.02, 1.20, depart.genou_remanence, 0.01, "", 2)
+        self.charge_maximale = Curseur(
+            "Capacité de la cible", 2.0, 40.0, depart.charge_maximale, 0.5,
+            " × blanc", 1)
+        self.biais = Curseur(
+            "Lumière de biais", 0.0, 0.15, depart.lumiere_de_biais, 0.01, "", 2)
+        self.desalignement = Curseur(
+            "Désalignement des tubes", 0.0, 6.0, depart.desalignement, 0.1, " px", 1)
+        self.masquage = Curseur(
+            "Matrice de masquage", 0.0, 1.0, depart.masquage, 0.05, "", 2)
+        self._curseurs_camera = (
+            self.faisceau, self.anti_comete, self.remanence, self.genou_remanence,
+            self.charge_maximale, self.biais, self.desalignement, self.masquage,
+        )
+        for curseur in self._curseurs_camera:
+            curseur.valeur_changee.connect(self._sur_curseur_camera)
+            groupe.ajouter(curseur)
+        self._colonne.addWidget(groupe)
+
+        groupe = Groupe("La scène (ce que la caméra regarde)")
+        self.eclat_reflets = Curseur("Éclat des reflets", 0.0, 100.0, 25.0, 1.0, " × blanc", 0)
+        self.seuil_reflets = Curseur("Seuil des reflets", 0.4, 1.0, 0.75, 0.01, "", 2)
+        for curseur in (self.eclat_reflets, self.seuil_reflets):
+            curseur.valeur_changee.connect(self._signaler)
+            groupe.ajouter(curseur)
+        groupe.ajouter(note(
+            "Ces deux-là ne décrivent pas la caméra mais le PLATEAU qu'elle "
+            "filme, et le menu des modèles n'y touche donc pas : deux caméras "
+            "différentes braquées sur les mêmes cymbales y voient les mêmes "
+            "reflets.\n\n"
+            "Ils existent parce qu'un fichier huit bits a déjà été écrêté par "
+            "celui qui l'a fabriqué : aucun pixel n'y dépasse le blanc, et sans "
+            "rien faire la cible ne serait jamais en surcharge — il n'y aurait "
+            "donc pas la moindre queue de comète."
+        ))
+        self._colonne.addWidget(groupe)
+
+        groupe = Groupe("Le filé (image fixe seulement)")
+        self.vitesse_file = Curseur("Vitesse du filé", -30.0, 30.0, 6.0, 1.0, " px/trame", 0)
+        self.champs_tube = Curseur("Trames intégrées", 1.0, 60.0, 14.0, 1.0, "", 0)
+        for curseur in (self.vitesse_file, self.champs_tube):
+            curseur.valeur_changee.connect(self._signaler)
+            groupe.ajouter(curseur)
+        groupe.ajouter(note(
+            "Une image fixe ne peut pas montrer de queue de comète : la traînée "
+            "EST la trace du passé d'un point qui a bougé, et une image fixe n'a "
+            "pas de passé. On simule donc le seul mouvement dont on dispose, "
+            "celui de la caméra : la scène glisse de tant de pixels par trame, on "
+            "intègre le nombre de trames demandé, et l'on n'affiche que la "
+            "dernière. Ce qui apparaît alors est le résultat d'un calcul sur "
+            "quatorze trames, pas un flou directionnel — et cela se voit : la "
+            "traînée s'arrête net au lieu de s'éteindre en fondu."
+        ))
+        self._colonne.addWidget(groupe)
+
+        groupe = Groupe("Ce que la caméra fait")
+        groupe.ajouter(note(
+            "Un tube analyseur ne mesure pas la lumière : il mesure la CHARGE que "
+            "la lumière a soutirée à une cible photoconductrice, et c'est le "
+            "courant qu'il faut au faisceau pour la remettre à niveau qui fait le "
+            "signal vidéo.\n\n"
+            "Le faisceau a un débit maximal, réglé pour évacuer 130 % du blanc. "
+            "Un reflet sur du chrome sous un projecteur en fait vingt-cinq fois. "
+            "Le faisceau en évacue une tranche FIXE par trame — d'où une "
+            "décroissance arithmétique et non exponentielle, et une traînée qui "
+            "s'arrête net. Elle se lit tout du long au maximum que le faisceau "
+            "sait fournir, donc au blanc écrêté : elle est plate, et l'image "
+            "disparaît derrière elle.\n\n"
+            "Le circuit anti-comète, livré par Philips en 1976, augmente "
+            "fortement le courant pendant la suppression ligne pour vider "
+            "l'excès. Passer du modèle de 1970 à celui de 1977 fait exactement "
+            "cela : les traînées disparaissent sans qu'on ait changé de tube."
+        ))
+        self._colonne.addWidget(groupe)
+
+        self._decrire_camera()
+
+    def _sur_modele_camera(self, *_args) -> None:
+        """Pose les six réglages du matériel choisi, en un seul rendu.
+
+        L'entrée « Réglage libre » ne touche à rien : elle est l'état dans lequel
+        bascule le menu dès qu'on déplace un curseur, et la choisir soi-même ne
+        doit donc rien changer.
+        """
+        if self._silencieux:
+            return
+        code = self.combo_camera.currentData()
+        if code is None:
+            self._decrire_camera()
+            return
+
+        camera = obtenir_camera(code)
+        precedent, self._silencieux = self._silencieux, True
+        try:
+            self.faisceau.definir(camera.faisceau)
+            self.anti_comete.definir(camera.anti_comete)
+            self.remanence.definir(camera.remanence)
+            self.genou_remanence.definir(camera.genou_remanence)
+            self.charge_maximale.definir(camera.charge_maximale)
+            self.biais.definir(camera.lumiere_de_biais)
+            self.desalignement.definir(camera.desalignement)
+            self.masquage.definir(camera.masquage)
+        finally:
+            self._silencieux = precedent
+        self._decrire_camera()
+        self._signaler()
+
+    def _sur_curseur_camera(self, *_args) -> None:
+        """Un curseur bougé : on n'est plus sur un modèle d'origine."""
+        if self._silencieux:
+            return
+        if self.combo_camera.currentData() is not None:
+            precedent, self._silencieux = self._silencieux, True
+            try:
+                self.combo_camera.setCurrentIndex(0)
+            finally:
+                self._silencieux = precedent
+            self._decrire_camera()
+        self._signaler()
+
+    def _decrire_camera(self) -> None:
+        """Rappelle en clair ce que le modèle choisi a de particulier."""
+        code = self.combo_camera.currentData()
+        if code is None:
+            self.etiquette_camera.setText(
+                "Réglages libres — le menu ne décrit plus le matériel."
+            )
+            return
+        camera = obtenir_camera(code)
+        self.etiquette_camera.setText(
+            f"{camera.tube}, vers {camera.annee}. {camera.caractere}\n\n"
+            f"Encaisse {camera.encaisse():{'.2f' if camera.encaisse() < 10.0 else '.0f'}} "
+            f"fois le blanc sans traîner ; "
+            f"rémanence mesurée à {camera.lag_troisieme_trame:.2f} % de résidu "
+            f"en troisième trame, à 5 % du blanc."
+        )
 
     def _construire_magnetoscope(self) -> None:
         """Le magnétoscope, entre l'antenne et le téléviseur — sa vraie place."""
@@ -340,6 +521,24 @@ class PanneauParametres(QtWidgets.QTabWidget):
             self.case_entrelace.setChecked(False)
             self.spin_image.setValue(0)
             self.case_bruit.setChecked(False)
+            self.case_tube.setChecked(False)
+            self.combo_camera.setCurrentIndex(
+                self.combo_camera.findData(CAMERA_PAR_DEFAUT)
+            )
+            camera = obtenir_camera(CAMERA_PAR_DEFAUT)
+            self.faisceau.definir(camera.faisceau)
+            self.anti_comete.definir(camera.anti_comete)
+            self.remanence.definir(camera.remanence)
+            self.genou_remanence.definir(camera.genou_remanence)
+            self.charge_maximale.definir(camera.charge_maximale)
+            self.biais.definir(camera.lumiere_de_biais)
+            self.desalignement.definir(camera.desalignement)
+            self.masquage.definir(camera.masquage)
+            self.eclat_reflets.definir(25.0)
+            self.seuil_reflets.definir(0.75)
+            self.vitesse_file.definir(6.0)
+            self.champs_tube.definir(14.0)
+            self._decrire_camera()
             self.rapport_sb.definir(40.0)
             self.phase_diff.definir(0.0)
             self.gain_diff.definir(0.0)
@@ -377,6 +576,21 @@ class PanneauParametres(QtWidgets.QTabWidget):
                 piedestal=self.case_piedestal.isChecked(),
                 entrelace=self.case_entrelace.isChecked(),
                 numero_image=self.spin_image.value(),
+            ),
+            tube=ParametresTube(
+                actif=self.case_tube.isChecked(),
+                faisceau=self.faisceau.valeur(),
+                anti_comete=self.anti_comete.valeur(),
+                remanence=self.remanence.valeur(),
+                genou_remanence=self.genou_remanence.valeur(),
+                charge_maximale=self.charge_maximale.valeur(),
+                lumiere_de_biais=self.biais.valeur(),
+                eclat_reflets=self.eclat_reflets.valeur(),
+                seuil_reflets=self.seuil_reflets.valeur(),
+                desalignement=self.desalignement.valeur(),
+                masquage=self.masquage.valeur(),
+                mouvement=(self.vitesse_file.valeur(), 0.0),
+                champs=int(self.champs_tube.valeur()),
             ),
             vhs=ParametresVHS(
                 actif=self.case_vhs.isChecked(),

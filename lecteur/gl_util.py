@@ -119,7 +119,15 @@ class Programme:
         if ou < 0:
             return
 
-        if isinstance(valeur, np.ndarray):
+        if isinstance(valeur, np.ndarray) and valeur.ndim == 2:
+            # Une matrice 3x3. `transpose=GL_TRUE` parce que numpy range par
+            # lignes et GLSL par colonnes : sans cela on transmettrait la
+            # transposée, ce qui pour une matrice de couleurs ne se voit pas
+            # tout de suite mais fausse tout.
+            if valeur.shape != (3, 3):
+                raise TypeError(f"uniforme {nom} : matrice {valeur.shape} non gérée")
+            GL.glUniformMatrix3fv(ou, 1, GL.GL_TRUE, valeur.astype(np.float32))
+        elif isinstance(valeur, np.ndarray):
             GL.glUniform1fv(ou, valeur.size, valeur.astype(np.float32))
         elif isinstance(valeur, bool):
             GL.glUniform1i(ou, int(valeur))
@@ -157,10 +165,19 @@ class Cible:
     """Un tampon d'image hors écran, avec sa texture attachée."""
 
     def __init__(
-        self, largeur: int, hauteur: int, format_interne=GL.GL_R16F, filtrage=None
+        self, largeur: int, hauteur: int, format_interne=GL.GL_R16F, filtrage=None,
+        mipmaps: bool = False,
     ):
         self.largeur, self.hauteur = largeur, hauteur
         self.format_interne = format_interne
+        self.mipmaps = mipmaps
+        if mipmaps:
+            # Une pyramide de mipmaps EST un flou séparable déjà calculé par la
+            # carte, et c'est le bon outil pour une tache de diffusion large.
+            # L'échantillonner coûte une lecture ; l'approcher par une couronne
+            # de huit points en coûte huit et laisse huit satellites — mesuré,
+            # 973 % d'ondulation sur un cercle au rayon du voile.
+            filtrage = GL.GL_LINEAR
         # Au plus proche par défaut : les boucles de filtrage visent des
         # centres de texel exacts. Les tampons de halo, eux, sont flous par
         # nature et agrandis à l'affichage : ils veulent du bilinéaire.
@@ -174,7 +191,8 @@ class Cible:
             canal, type_donnees, None,
         )
         for parametre, valeur in (
-            (GL.GL_TEXTURE_MIN_FILTER, filtrage),
+            (GL.GL_TEXTURE_MIN_FILTER,
+             GL.GL_LINEAR_MIPMAP_LINEAR if mipmaps else filtrage),
             (GL.GL_TEXTURE_MAG_FILTER, filtrage),
             (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE),
             (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE),
@@ -195,6 +213,25 @@ class Cible:
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self.fbo)
         GL.glViewport(0, 0, self.largeur, self.hauteur)
 
+    def generer_mipmaps(self) -> None:
+        """Reconstruit la pyramide après avoir écrit dans la cible."""
+        if not self.mipmaps:
+            return
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture)
+        GL.glGenerateMipmap(GL.GL_TEXTURE_2D)
+
+    def effacer(self) -> None:
+        """Met la cible à zéro.
+
+        `glTexImage2D` avec un pointeur nul ALLOUE la texture sans la définir :
+        son contenu est ce que la carte avait laissé là. Sans importance pour
+        une cible qu'on écrit entièrement à chaque image — sauf pour la charge
+        du tube analyseur, qui se lit avant d'être écrite.
+        """
+        self.activer()
+        GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+        GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+
     def lier(self, unite: int) -> None:
         GL.glActiveTexture(GL.GL_TEXTURE0 + unite)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture)
@@ -212,6 +249,7 @@ def _description(format_interne):
         GL.GL_R32F: (GL.GL_RED, GL.GL_FLOAT),
         GL.GL_RG32F: (GL.GL_RG, GL.GL_FLOAT),
         GL.GL_RGBA16F: (GL.GL_RGBA, GL.GL_FLOAT),
+        GL.GL_RGBA32F: (GL.GL_RGBA, GL.GL_FLOAT),
         GL.GL_RGBA8: (GL.GL_RGBA, GL.GL_UNSIGNED_BYTE),
     }[format_interne]
 

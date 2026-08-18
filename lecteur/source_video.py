@@ -43,6 +43,67 @@ décoder, assez peu pour qu'un déplacement dans la vidéo réponde tout de suit
 SECONDES_AUDIO_EN_AVANCE = 0.6
 
 
+# ---------------------------------------------------------------------------
+# Format d'image
+# ---------------------------------------------------------------------------
+
+def format_tv(norme) -> tuple[int, int]:
+    """Trame active de la norme, en pixels carrés : (hauteur, largeur).
+
+    Le nombre de lignes ne se discute pas — 576 ou 480, c'est la norme. La
+    largeur s'en déduit par le format d'image de 4:3, qui était celui de tous
+    les téléviseurs jusqu'aux années 2000 : 768 points pour 576 lignes, 640
+    pour 480.
+    """
+    hauteur = norme.lignes_actives
+    return hauteur, int(round(hauteur * 4.0 / 3.0))
+
+
+def ramener_au_format_tv(image: np.ndarray, norme) -> np.ndarray:
+    """Ramène une image à la trame active de la norme, bandes noires comprises.
+
+    Pourquoi c'est utile alors que la chaîne limite déjà la bande passante :
+
+    1. **C'est une garantie plutôt qu'un effet de bord.** Sans cela, le
+       sous-échantillonnage est laissé au choix de niveau de détail de la carte
+       graphique, qui n'est pas un filtre d'aire : sur une veste à fines rayures
+       il laisse passer du repliement, et l'on prendrait pour du cross-color ce
+       qui n'est qu'un défaut de rééchantillonnage. `INTER_AREA` moyenne
+       exactement les pixels recouverts.
+
+    2. **Cinq fois moins à transférer.** Une image 1920×1080 pèse 6,2 Mo, la
+       même en 768×576 en pèse 1,3. À cinquante images par seconde, cela fait
+       250 Mo/s d'écart sur le bus.
+
+    3. **Le format d'image.** Une source 16:9 est mise en boîte aux lettres
+       dans la trame 4:3, exactement comme un film large diffusé à l'époque.
+       Rogner aurait été l'autre choix des diffuseurs ; on garde tout.
+    """
+    import cv2
+
+    hauteur, largeur = format_tv(norme)
+    h_source, w_source = image.shape[:2]
+    if (h_source, w_source) == (hauteur, largeur):
+        return image
+
+    # Mise à l'échelle qui préserve le format de la source, puis centrage.
+    echelle = min(largeur / w_source, hauteur / h_source)
+    w_cible = max(1, int(round(w_source * echelle)))
+    h_cible = max(1, int(round(h_source * echelle)))
+
+    interpolation = cv2.INTER_AREA if echelle < 1.0 else cv2.INTER_LINEAR
+    reduite = cv2.resize(image, (w_cible, h_cible), interpolation=interpolation)
+
+    if (h_cible, w_cible) == (hauteur, largeur):
+        return reduite
+
+    sortie = np.zeros((hauteur, largeur, image.shape[2]), dtype=image.dtype)
+    y = (hauteur - h_cible) // 2
+    x = (largeur - w_cible) // 2
+    sortie[y : y + h_cible, x : x + w_cible] = reduite
+    return sortie
+
+
 @dataclass
 class InfosVideo:
     chemin: str
